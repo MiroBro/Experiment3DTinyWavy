@@ -123,6 +123,32 @@ public class MermaidBootstrap : MonoBehaviour
     [Tooltip("Include the head as an avoidance sphere. OFF lets you anchor the hair inside the head — strands emerge from inside the skull rather than being pushed to the surface.")]
     public bool hairAvoidsHead = false;
 
+    [Header("Textured Hair (live-editable)")]
+    [Tooltip("ON = use the Hair/Curly shader for a coily/textured natural hair look. OFF = default smooth look. Geometry is unchanged either way.")]
+    public bool texturedHair = false;
+    [Tooltip("Curl frequency along the strand (cycles per strand length). Higher = tighter curls. Try 30–60 for typical coily textures.")]
+    [Range(1f, 200f)]
+    public float hairCurlFrequency = 35f;
+    [Tooltip("Curl band light/dark depth. Higher = more pronounced bands.")]
+    [Range(0f, 1f)]
+    public float hairCurlDepth = 0.45f;
+    [Tooltip("Curl band sharpness. 0 = soft sine; 1 = hard square edges.")]
+    [Range(0f, 1f)]
+    public float hairCurlSharpness = 0.4f;
+    [Tooltip("How much each strand's curl phase is offset — keeps strands from looking lockstep.")]
+    [Range(0f, 1f)]
+    public float hairCurlPhaseScramble = 0.6f;
+    [Tooltip("Texture noise scale.")]
+    [Range(0.1f, 200f)]
+    public float hairNoiseScale = 60f;
+    [Tooltip("Texture noise strength. Higher = fuzzier strand surface.")]
+    [Range(0f, 0.5f)]
+    public float hairNoiseStrength = 0.12f;
+    [Tooltip("Color in the dark portions of the curls.")]
+    public Color hairCurlShadowColor = new Color(0.18f, 0.07f, 0.04f);
+    [Tooltip("Rim/sheen highlight color on strand edges.")]
+    public Color hairCurlRimColor = new Color(1.0f, 0.7f, 0.45f);
+
     [Header("Anchors (populated at runtime)")]
     public Transform root;
     public Transform driver;
@@ -167,6 +193,10 @@ public class MermaidBootstrap : MonoBehaviour
     int _lastFlukeBonesPerLobe = -1;
     float _lastFlukeSpan = float.NaN;
     float _lastFlukeSweepZ = float.NaN;
+    Shader _curlyHairShader;
+    bool _curlyHairShaderResolved;
+    Material _defaultLitMatTemplate;
+
     int _lastHairStrandCount = -1;
     int _lastHairBonesPerStrand = -1;
     float _lastHairStrandLength = float.NaN;
@@ -309,6 +339,9 @@ public class MermaidBootstrap : MonoBehaviour
             RebuildHairColliders();
         }
         UpdateHairColliderRadii();
+
+        // 6c. Hair material — swap to/from the Hair/Curly shader and push live curl params.
+        UpdateHairMaterials();
 
         // 7. Live update hair tubes (radii + per-ring aspect from curves).
         for (int s = 0; s < hairTubes.Count; s++)
@@ -570,6 +603,82 @@ public class MermaidBootstrap : MonoBehaviour
             if (hairBones[i] == null) continue;
             hairBones[i].avoidanceColliders = _hairColliderTransforms;
             hairBones[i].avoidanceRadii = _hairColliderRadii;
+        }
+    }
+
+    Shader GetCurlyHairShader()
+    {
+        if (!_curlyHairShaderResolved)
+        {
+            _curlyHairShader = Shader.Find("Hair/Curly");
+            _curlyHairShaderResolved = true;
+        }
+        return _curlyHairShader;
+    }
+
+    Material GetDefaultLitTemplate()
+    {
+        if (_defaultLitMatTemplate == null)
+        {
+            var temp = GameObject.CreatePrimitive(PrimitiveType.Cube);
+            _defaultLitMatTemplate = temp.GetComponent<Renderer>().sharedMaterial;
+            Destroy(temp);
+        }
+        return _defaultLitMatTemplate;
+    }
+
+    void UpdateHairMaterials()
+    {
+        if (hairTubes.Count == 0) return;
+
+        Shader curly = texturedHair ? GetCurlyHairShader() : null;
+
+        for (int i = 0; i < hairTubes.Count; i++)
+        {
+            var tube = hairTubes[i];
+            if (tube == null) continue;
+            var mr = tube.GetComponent<MeshRenderer>();
+            if (mr == null) continue;
+            var mat = mr.sharedMaterial;
+
+            if (texturedHair && curly != null)
+            {
+                if (mat == null || mat.shader != curly)
+                {
+                    mat = new Material(curly);
+                    mr.sharedMaterial = mat;
+                }
+                mat.SetColor("_BaseColor", hairColor);
+                mat.SetFloat("_CurlFrequency", hairCurlFrequency);
+                mat.SetFloat("_CurlDepth", hairCurlDepth);
+                mat.SetFloat("_CurlSharpness", hairCurlSharpness);
+                mat.SetFloat("_CurlPhaseScramble", hairCurlPhaseScramble);
+                mat.SetFloat("_NoiseScale", hairNoiseScale);
+                mat.SetFloat("_NoiseStrength", hairNoiseStrength);
+                mat.SetColor("_ShadowColor", hairCurlShadowColor);
+                mat.SetColor("_RimColor", hairCurlRimColor);
+            }
+            else
+            {
+                // texturedHair OFF (or shader missing): make sure we're back on the default URP/Lit.
+                bool needsSwap = (mat == null) || (curly != null && mat.shader == curly);
+                if (needsSwap)
+                {
+                    var src = GetDefaultLitTemplate();
+                    if (src != null)
+                    {
+                        mat = new Material(src);
+                        if (mat.HasProperty("_BaseColor")) mat.SetColor("_BaseColor", hairColor);
+                        if (mat.HasProperty("_Color")) mat.color = hairColor;
+                        mr.sharedMaterial = mat;
+                    }
+                }
+                else if (mat != null)
+                {
+                    if (mat.HasProperty("_BaseColor")) mat.SetColor("_BaseColor", hairColor);
+                    if (mat.HasProperty("_Color")) mat.color = hairColor;
+                }
+            }
         }
     }
 

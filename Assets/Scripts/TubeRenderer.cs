@@ -24,6 +24,7 @@ public class TubeRenderer : MonoBehaviour
 
     Mesh mesh;
     Vector3[] vertsBuf;
+    Vector2[] uvsBuf;
     int[] trisBuf;
     Vector3[] localPts;
     Vector3[] tangents;
@@ -52,6 +53,7 @@ public class TubeRenderer : MonoBehaviour
         if (vertsBuf == null || vertsBuf.Length != totalVerts)
         {
             vertsBuf = new Vector3[totalVerts];
+            uvsBuf = new Vector2[totalVerts];
             trisBuf = new int[totalTriIdx];
         }
         if (localPts == null || localPts.Length != N)
@@ -217,8 +219,27 @@ public class TubeRenderer : MonoBehaviour
             }
         }
 
+        // Generate UVs: U around the ring [0..1), V along the tube length [0..1].
+        // This lets shaders (e.g. Hair/Curly) reference position along and around the tube.
+        int uvIdx = 0;
+        for (int i = 0; i < N; i++)
+        {
+            float vCoord = (N > 1) ? (float)i / (N - 1) : 0f;
+            for (int k = 0; k < S; k++)
+            {
+                float uCoord = (float)k / S;
+                uvsBuf[uvIdx++] = new Vector2(uCoord, vCoord);
+            }
+        }
+        if (capEnds)
+        {
+            uvsBuf[uvIdx++] = new Vector2(0.5f, 0f); // start cap center
+            uvsBuf[uvIdx++] = new Vector2(0.5f, 1f); // end cap center
+        }
+
         mesh.Clear();
         mesh.vertices = vertsBuf;
+        mesh.uv = uvsBuf;
         mesh.triangles = trisBuf;
         mesh.RecalculateNormals();
         mesh.RecalculateBounds();
