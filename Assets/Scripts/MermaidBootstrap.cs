@@ -50,10 +50,13 @@ public class MermaidBootstrap : MonoBehaviour
     public int tailSegments = 8;
     [Tooltip("Total length of the tail from hip to fluke base, in metres.")]
     public float tailLength = 1.6f;
-    [Tooltip("Cylinder radius at the hip end of the tail.")]
+    [Tooltip("Tube radius at the hip end of the tail.")]
     public float tailBaseRadius = 0.42f;
-    [Tooltip("Cylinder radius at the fluke end of the tail. Linearly interpolated.")]
+    [Tooltip("Tube radius at the fluke end of the tail. Linearly interpolated.")]
     public float tailTipRadius = 0.10f;
+    [Tooltip("Number of sides around the tail's tube cross-section. Higher = smoother silhouette.")]
+    [Range(6, 32)]
+    public int tailTubeSides = 16;
     [Tooltip("smoothTime of the first tail segment (small lag).")]
     public float tailBaseSmoothTime = 0.18f;
     [Tooltip("smoothTime of the last tail segment (most lag — whip-like tip).")]
@@ -204,22 +207,55 @@ public class MermaidBootstrap : MonoBehaviour
         float segLen = tailLength / Mathf.Max(1, tailSegments);
         float startZ = hipBone.localPosition.z;
 
+        // Single continuous tube mesh covering hip + every tail bone — no more
+        // visible joins between cylinders, just one smooth tapered tail.
+        int N = tailSegments + 1;
+        Transform[] tubePoints = new Transform[N];
+        float[] tubeRadii = new float[N];
+        tubePoints[0] = hipBone;
+        tubeRadii[0] = tailBaseRadius;
+
         for (int i = 0; i < tailSegments; i++)
         {
-            float tBone = (i + 1) / (float)tailSegments;            // 1/N .. 1
-            float tLink = (i + 0.5f) / tailSegments;                 // mid-segment for radius
+            float tBone = (i + 1) / (float)tailSegments;
             float smoothTime = Mathf.Lerp(tailBaseSmoothTime, tailTipSmoothTime, tBone);
-            float radius = Mathf.Lerp(tailBaseRadius, tailTipRadius, tLink);
 
             float z = startZ - segLen * (i + 1);
             var seg = MakeBone($"Tail{i:D2}", root, new Vector3(0f, 0f, z), prev, smoothTime, chain);
 
-            MakeLink($"TailLink{i:D2}", root, prev, seg, radius, tailColor);
+            tubePoints[i + 1] = seg;
+            tubeRadii[i + 1] = Mathf.Lerp(tailBaseRadius, tailTipRadius, tBone);
 
             prev = seg;
         }
 
+        MakeTube("TailTube", root, tubePoints, tubeRadii, tailColor, tailTubeSides);
+
         BuildFluke(prev);
+    }
+
+    void MakeTube(string name, Transform parent, Transform[] tubePoints, float[] tubeRadii, Color tint, int sides)
+    {
+        var go = new GameObject(name);
+        go.transform.SetParent(parent, false);
+        go.AddComponent<MeshFilter>();
+        var mr = go.AddComponent<MeshRenderer>();
+
+        // Snag the URP/Lit (or built-in) default material from a temp primitive so the
+        // tube renders the same as the other body parts.
+        var temp = GameObject.CreatePrimitive(PrimitiveType.Cube);
+        var srcMat = temp.GetComponent<Renderer>().sharedMaterial;
+        var mat = new Material(srcMat);
+        Destroy(temp);
+        if (mat.HasProperty("_BaseColor")) mat.SetColor("_BaseColor", tint);
+        if (mat.HasProperty("_Color")) mat.color = tint;
+        mr.sharedMaterial = mat;
+
+        var tube = go.AddComponent<TubeRenderer>();
+        tube.points = tubePoints;
+        tube.radii = tubeRadii;
+        tube.sides = sides;
+        tube.capEnds = true;
     }
 
     void BuildFluke(Transform tailTip)
