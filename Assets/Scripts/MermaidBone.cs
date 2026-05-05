@@ -17,6 +17,15 @@ public class MermaidBone : MonoBehaviour
     [Tooltip("Optional secondary anchor — the anchor's anchor — used to define the natural fold direction. For an arm-elbow-hand chain set this on the HAND to the SHOULDER. When set, the cone above becomes asymmetric: tight in backward/sideways directions, fully open in the natural fold direction.")]
     public Transform bendReferenceAnchor;
 
+    /// <summary>
+    /// Optional list of sphere colliders this bone is pushed out of after its position
+    /// is computed. Assigned at runtime — typically a shared array used by all hair bones
+    /// pointing at the body parts (head, neck, torso, hip, tail bones). The matching
+    /// <see cref="avoidanceRadii"/> array gives the sphere radius at each collider.
+    /// </summary>
+    [System.NonSerialized] public Transform[] avoidanceColliders;
+    [System.NonSerialized] public float[] avoidanceRadii;
+
     [Header("Debug")]
     [Tooltip("Logs to Console whenever a constraint fires (cone clamp or hyperextension clamp). Use this to verify the constraint is doing anything.")]
     public bool debugLog = false;
@@ -166,6 +175,29 @@ public class MermaidBone : MonoBehaviour
             if (currentLen > 0.0001f && restLen > 0.0001f)
             {
                 newPos = anchor.position + (dirFromAnchor / currentLen) * restLen;
+            }
+        }
+
+        // Soft-sphere avoidance: push the bone out of any body collider it has
+        // penetrated. Done last so it overrides the rest-distance pull when hair
+        // is brushing against the body — the bone slightly stretches but doesn't
+        // clip through.
+        if (avoidanceColliders != null && avoidanceRadii != null)
+        {
+            int n = Mathf.Min(avoidanceColliders.Length, avoidanceRadii.Length);
+            for (int c = 0; c < n; c++)
+            {
+                var col = avoidanceColliders[c];
+                if (col == null) continue;
+                float r = avoidanceRadii[c];
+                if (r <= 0f) continue;
+                Vector3 toBone = newPos - col.position;
+                float distSq = toBone.sqrMagnitude;
+                if (distSq < r * r && distSq > 0.000001f)
+                {
+                    float dist = Mathf.Sqrt(distSq);
+                    newPos = col.position + toBone * (r / dist);
+                }
             }
         }
 

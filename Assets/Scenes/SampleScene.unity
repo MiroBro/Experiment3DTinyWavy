@@ -540,8 +540,8 @@ MonoBehaviour:
   tailTipSmoothTime: 0.55
   tailFlowMultiplier: 0.3
   flukeBonesPerLobe: 12
-  flukeSpan: 1.2
-  flukeSweepZ: -0.87
+  flukeSpan: 1.11
+  flukeSweepZ: -1.74
   flukeRadiusCurve:
     serializedVersion: 2
     m_Curve:
@@ -588,10 +588,13 @@ MonoBehaviour:
   flukeTubeSides: 9
   flukeBaseSmoothTime: 0.1
   flukeTipSmoothTime: 0.3
-  flukeFlowMultiplier: 1.56
-  hairStrandCount: 40
-  hairBonesPerStrand: 16
+  flukeFlowMultiplier: 2.31
+  hairStrandCount: 17
+  hairBonesPerStrand: 34
   hairStrandLength: 2.89
+  hairLengthVariance: 0.221
+  hairRootOffset: {x: 0, y: 0.15, z: -0.08}
+  hairBaseDirection: {x: 0, y: 0.03, z: -1}
   hairRadiusCurve:
     serializedVersion: 2
     m_Curve:
@@ -619,9 +622,10 @@ MonoBehaviour:
   hairTubeSides: 12
   hairBaseSmoothTime: 0.1
   hairTipSmoothTime: 0.5
-  hairFlowMultiplier: 1
+  hairFlowMultiplier: 0.38
   hairSpreadAngle: 14.3
   hairSeed: 168
+  hairColliderRadiusMultiplier: 1.05
   root: {fileID: 0}
   driver: {fileID: 0}
   headPoint: {fileID: 0}

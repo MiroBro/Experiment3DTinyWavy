@@ -78,12 +78,19 @@ public class MermaidBootstrap : MonoBehaviour
     [Range(0.05f, 5f)]
     public float flukeFlowMultiplier = 1f;
 
-    [Header("Hair (live-editable; rebuilds on strands/bones/length/spread/seed change)")]
+    [Header("Hair (live-editable; some fields rebuild the hair on change)")]
     [Range(1, 40)]
     public int hairStrandCount = 14;
-    [Range(3, 16)]
+    [Range(3, 48)]
     public int hairBonesPerStrand = 8;
     public float hairStrandLength = 1.6f;
+    [Tooltip("Per-strand length variance. 0 = all strands same length; 0.4 = lengths randomly range from 60%–140% of hairStrandLength.")]
+    [Range(0f, 1f)]
+    public float hairLengthVariance = 0.20f;
+    [Tooltip("Position of the hair root in the head's local frame. Live: drag in Inspector to move where the hair attaches to the head, no rebuild needed.")]
+    public Vector3 hairRootOffset = new Vector3(0f, 0.20f, -0.25f);
+    [Tooltip("Base direction strands extend from the scalp, in the head's local frame. (0,0,-1) = straight back. (0, 0.3, -1) = arc up-then-back so strands stay above the body. Per-strand pitch/yaw randomness is applied on top.")]
+    public Vector3 hairBaseDirection = new Vector3(0f, 0f, -1f);
     [Tooltip("Hair strand radius along its length. X = 0 at scalp, 1 at tip.")]
     public AnimationCurve hairRadiusCurve = new AnimationCurve(
         new Keyframe(0f, 0.020f),
@@ -100,6 +107,9 @@ public class MermaidBootstrap : MonoBehaviour
     public float hairSpreadAngle = 35f;
     [Tooltip("Random seed for strand directions. Same seed = same look.")]
     public int hairSeed = 42;
+    [Tooltip("Multiplier for the body sphere-collider radii that hair gets pushed out of. 1.0 = match the body's actual size; >1 = hair stays a bit further from the body.")]
+    [Range(0.5f, 2.5f)]
+    public float hairColliderRadiusMultiplier = 1.05f;
 
     [Header("Anchors (populated at runtime)")]
     public Transform root;
@@ -131,6 +141,13 @@ public class MermaidBootstrap : MonoBehaviour
     readonly List<TubeRenderer> hairTubes = new List<TubeRenderer>();
     readonly List<float[]> hairTubeRadiiList = new List<float[]>();
 
+    // Hair-body collision state.
+    readonly List<MermaidBone> tailBonesOrdered = new List<MermaidBone>();
+    Transform[] _hairColliderTransforms;
+    float[] _hairColliderRadii;       // shared with hair bones; updated in-place
+    float[] _hairColliderBaseRadii;   // unmultiplied base radii
+    int _hairColliderTailStartIdx = -1;
+
     int _lastTailSegments = -1;
     float _lastTailLength = float.NaN;
     int _lastFlukeBonesPerLobe = -1;
@@ -141,6 +158,8 @@ public class MermaidBootstrap : MonoBehaviour
     float _lastHairStrandLength = float.NaN;
     float _lastHairSpreadAngle = float.NaN;
     int _lastHairSeed = int.MinValue;
+    float _lastHairLengthVariance = float.NaN;
+    Vector3 _lastHairBaseDirection = new Vector3(float.NaN, 0f, 0f);
 
     void Awake()
     {
@@ -161,6 +180,8 @@ public class MermaidBootstrap : MonoBehaviour
         _lastHairStrandLength = hairStrandLength;
         _lastHairSpreadAngle = hairSpreadAngle;
         _lastHairSeed = hairSeed;
+        _lastHairLengthVariance = hairLengthVariance;
+        _lastHairBaseDirection = hairBaseDirection;
     }
 
     bool TailFlukeShapeChanged()
@@ -178,7 +199,9 @@ public class MermaidBootstrap : MonoBehaviour
             || hairBonesPerStrand != _lastHairBonesPerStrand
             || !Mathf.Approximately(hairStrandLength, _lastHairStrandLength)
             || !Mathf.Approximately(hairSpreadAngle, _lastHairSpreadAngle)
-            || hairSeed != _lastHairSeed;
+            || hairSeed != _lastHairSeed
+            || !Mathf.Approximately(hairLengthVariance, _lastHairLengthVariance)
+            || (hairBaseDirection - _lastHairBaseDirection).sqrMagnitude > 0.0001f;
     }
 
     void Update()
@@ -213,6 +236,10 @@ public class MermaidBootstrap : MonoBehaviour
         if (handR != null) handR.maxBendAngleDeg = handMaxBendAngleDeg;
         if (elbowL != null) elbowL.maxBendAngleDeg = elbowMaxBendAngleDeg;
         if (elbowR != null) elbowR.maxBendAngleDeg = elbowMaxBendAngleDeg;
+
+        // Live-editable hair root position. Hair bones stay anchored to headPoint so
+        // moving it drags the entire hair with the chain's lag.
+        if (headPoint != null) headPoint.localPosition = hairRootOffset;
 
         // 4. Detect shape changes — rebuild affected groups.
         if (TailFlukeShapeChanged())
@@ -254,6 +281,9 @@ public class MermaidBootstrap : MonoBehaviour
                 }
             }
         }
+
+        // 6b. Refresh hair-body collider radii (live: tail curve + buffer multiplier).
+        UpdateHairColliderRadii();
 
         // 7. Live update hair tubes.
         for (int s = 0; s < hairTubes.Count; s++)
@@ -301,7 +331,7 @@ public class MermaidBootstrap : MonoBehaviour
 
         headPoint = new GameObject("HeadAnchor").transform;
         headPoint.SetParent(head.transform, false);
-        headPoint.localPosition = new Vector3(0f, 0.2f, -0.25f);
+        headPoint.localPosition = hairRootOffset;
 
         for (int side = -1; side <= 1; side += 2)
         {
@@ -371,21 +401,24 @@ public class MermaidBootstrap : MonoBehaviour
         var prevState = UnityEngine.Random.state;
         UnityEngine.Random.InitState(hairSeed);
 
-        float segLen = hairStrandLength / Mathf.Max(1, hairBonesPerStrand);
+        Vector3 baseDir = hairBaseDirection.sqrMagnitude > 0.0001f
+            ? hairBaseDirection.normalized
+            : Vector3.back;
 
         for (int s = 0; s < hairStrandCount; s++)
         {
-            // Pick a deterministic-pseudo-random direction in the back hemisphere:
-            // yaw spread sideways across the back, with a downward pitch bias so hair
-            // drapes over the shoulders rather than sticking out horizontally.
+            // Per-strand variance — direction (yaw spread + small pitch wobble) and length.
             float t = (hairStrandCount > 1) ? (float)s / (hairStrandCount - 1) : 0.5f;
             float yawDeg = Mathf.Lerp(-hairSpreadAngle, hairSpreadAngle, t)
                            + UnityEngine.Random.Range(-4f, 4f);
-            float pitchDeg = UnityEngine.Random.Range(-25f, 5f); // mostly downward
+            float pitchDeg = UnityEngine.Random.Range(-15f, 15f);
             Quaternion strandRot = Quaternion.Euler(pitchDeg, yawDeg, 0f);
-            Vector3 strandDir = strandRot * Vector3.back;        // base direction = -Z, then tilted
+            Vector3 strandDir = strandRot * baseDir;
 
-            // First control point of the tube is the scalp anchor itself.
+            float lenMul = 1f + UnityEngine.Random.Range(-hairLengthVariance, hairLengthVariance);
+            float strandLen = hairStrandLength * Mathf.Max(0.05f, lenMul);
+            float segLen = strandLen / Mathf.Max(1, hairBonesPerStrand);
+
             int N = hairBonesPerStrand + 1;
             Transform[] tubePoints = new Transform[N];
             tubePoints[0] = scalpAnchor;
@@ -450,6 +483,75 @@ public class MermaidBootstrap : MonoBehaviour
         if (headPoint != null)
         {
             BuildHair(root, headPoint, chain);
+            RebuildHairColliders();
+        }
+    }
+
+    void RebuildHairColliders()
+    {
+        var transforms = new List<Transform>();
+        var baseRadii = new List<float>();
+
+        // Upper-body sphere approximations (radii roughly match the visible meshes).
+        if (driver != null)               { transforms.Add(driver);    baseRadii.Add(0.32f); } // head
+        if (root != null) {
+            var neck = root.Find("Neck");
+            if (neck != null)             { transforms.Add(neck);      baseRadii.Add(0.18f); }
+            var torso = root.Find("Torso");
+            if (torso != null)            { transforms.Add(torso);     baseRadii.Add(0.30f); }
+        }
+        if (hipPoint != null)             { transforms.Add(hipPoint);  baseRadii.Add(0.30f); }
+
+        // Tail bones — radii will be sampled live from tailRadiusCurve in Update.
+        _hairColliderTailStartIdx = transforms.Count;
+        for (int i = 0; i < tailBonesOrdered.Count; i++)
+        {
+            var b = tailBonesOrdered[i];
+            if (b == null) continue;
+            transforms.Add(b.transform);
+            baseRadii.Add(0.20f); // placeholder, replaced each frame
+        }
+
+        _hairColliderTransforms = transforms.ToArray();
+        _hairColliderBaseRadii = baseRadii.ToArray();
+        _hairColliderRadii = new float[_hairColliderBaseRadii.Length];
+        UpdateHairColliderRadii();
+
+        // Push the shared arrays to every hair bone.
+        for (int i = 0; i < hairBones.Count; i++)
+        {
+            if (hairBones[i] == null) continue;
+            hairBones[i].avoidanceColliders = _hairColliderTransforms;
+            hairBones[i].avoidanceRadii = _hairColliderRadii;
+        }
+    }
+
+    void UpdateHairColliderRadii()
+    {
+        if (_hairColliderRadii == null || _hairColliderBaseRadii == null) return;
+        float buf = Mathf.Max(0.1f, hairColliderRadiusMultiplier);
+        int tailCount = tailBonesOrdered.Count;
+        for (int i = 0; i < _hairColliderRadii.Length; i++)
+        {
+            float baseR;
+            if (i < _hairColliderTailStartIdx || _hairColliderTailStartIdx < 0)
+            {
+                baseR = _hairColliderBaseRadii[i];
+            }
+            else
+            {
+                int tailIdx = i - _hairColliderTailStartIdx;
+                if (tailCount > 0 && tailIdx < tailCount)
+                {
+                    float t = (tailIdx + 1) / (float)tailCount;
+                    baseR = tailRadiusCurve.Evaluate(t);
+                }
+                else
+                {
+                    baseR = _hairColliderBaseRadii[i];
+                }
+            }
+            _hairColliderRadii[i] = baseR * buf;
         }
     }
 
@@ -477,6 +579,7 @@ public class MermaidBootstrap : MonoBehaviour
             var mb = seg.GetComponent<MermaidBone>();
             tailFlukeBones.Add(mb);
             tailBoneSet.Add(mb);
+            tailBonesOrdered.Add(mb);
             tailGameObjects.Add(seg.gameObject);
 
             prev = seg;
@@ -546,6 +649,7 @@ public class MermaidBootstrap : MonoBehaviour
         tailFlukeBones.Clear();
         tailBoneSet.Clear();
         flukeBoneSet.Clear();
+        tailBonesOrdered.Clear();
 
         // Destroy old GameObjects (tail bones, tail tube, fluke bones, fluke tubes).
         for (int i = 0; i < tailGameObjects.Count; i++)
@@ -567,6 +671,9 @@ public class MermaidBootstrap : MonoBehaviour
             Transform tailTip = (tailFlukeBones.Count > 0) ? tailFlukeBones[tailFlukeBones.Count - 1].transform : hipBone;
             BuildFluke(root, tailTip, chain);
         }
+
+        // Refresh hair colliders since the tail bones are new references now.
+        RebuildHairColliders();
     }
 
     Transform MakeBone(string name, Transform parent, Vector3 localPos, Transform anchor, float baseSmoothTime, MermaidBoneChain chain)
