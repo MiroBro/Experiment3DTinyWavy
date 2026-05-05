@@ -10,6 +10,8 @@ public class MermaidBootstrap : MonoBehaviour
     public Color hipColor   = new Color(0.50f, 0.32f, 0.10f);
     public Color jointColor = new Color(0.93f, 0.78f, 0.62f);
     public Color handColor  = new Color(0.93f, 0.78f, 0.62f);
+    public Color tailColor  = new Color(0.45f, 0.28f, 0.10f);
+    public Color flukeColor = new Color(0.30f, 0.18f, 0.07f);
 
     [Header("Spawn")]
     public Vector3 spawnPosition = Vector3.zero;
@@ -42,6 +44,31 @@ public class MermaidBootstrap : MonoBehaviour
     [Tooltip("Symmetric bend cone for the elbow relative to the shoulder, in degrees from rest direction. 180 = no constraint.")]
     [Range(0f, 180f)]
     public float elbowMaxBendAngleDeg = 180f;
+
+    [Header("Tail")]
+    [Range(3, 16)]
+    public int tailSegments = 8;
+    [Tooltip("Total length of the tail from hip to fluke base, in metres.")]
+    public float tailLength = 1.6f;
+    [Tooltip("Cylinder radius at the hip end of the tail.")]
+    public float tailBaseRadius = 0.42f;
+    [Tooltip("Cylinder radius at the fluke end of the tail. Linearly interpolated.")]
+    public float tailTipRadius = 0.10f;
+    [Tooltip("smoothTime of the first tail segment (small lag).")]
+    public float tailBaseSmoothTime = 0.18f;
+    [Tooltip("smoothTime of the last tail segment (most lag — whip-like tip).")]
+    public float tailTipSmoothTime = 0.55f;
+
+    [Header("Fluke")]
+    [Tooltip("Total left-right span of the fluke (the horizontal fluke at the tail tip).")]
+    public float flukeSpan = 0.85f;
+    [Tooltip("Front-to-back depth of each fluke lobe.")]
+    public float flukeChord = 0.45f;
+    [Tooltip("Vertical thickness of the fluke (it's a flat horizontal fin).")]
+    public float flukeThickness = 0.06f;
+    [Tooltip("Outward sweep angle of each fluke lobe in degrees (gives the V-shape).")]
+    [Range(0f, 45f)]
+    public float flukeSweepDeg = 12f;
 
     [Header("Anchors (populated at runtime)")]
     public Transform root;
@@ -166,7 +193,51 @@ public class MermaidBootstrap : MonoBehaviour
             MakeLink("LowerArmLink" + suffix, root, elbow, hand, 0.07f, skinColor);
         }
 
+        BuildTail(root, hipBone, chain);
+
         chain.Initialize();
+    }
+
+    void BuildTail(Transform root, Transform hipBone, MermaidBoneChain chain)
+    {
+        Transform prev = hipBone;
+        float segLen = tailLength / Mathf.Max(1, tailSegments);
+        float startZ = hipBone.localPosition.z;
+
+        for (int i = 0; i < tailSegments; i++)
+        {
+            float tBone = (i + 1) / (float)tailSegments;            // 1/N .. 1
+            float tLink = (i + 0.5f) / tailSegments;                 // mid-segment for radius
+            float smoothTime = Mathf.Lerp(tailBaseSmoothTime, tailTipSmoothTime, tBone);
+            float radius = Mathf.Lerp(tailBaseRadius, tailTipRadius, tLink);
+
+            float z = startZ - segLen * (i + 1);
+            var seg = MakeBone($"Tail{i:D2}", root, new Vector3(0f, 0f, z), prev, smoothTime, chain);
+
+            MakeLink($"TailLink{i:D2}", root, prev, seg, radius, tailColor);
+
+            prev = seg;
+        }
+
+        BuildFluke(prev);
+    }
+
+    void BuildFluke(Transform tailTip)
+    {
+        // Two flat horizontal lobes attached to the tail's last bone.
+        // They inherit the tip's rotation, so they slap up/down with the tail wave.
+        float lobeWidth = flukeSpan * 0.45f;
+        float lobeCenterX = flukeSpan * 0.30f;
+        float lobeOffsetZ = -flukeChord * 0.5f;
+        for (int side = -1; side <= 1; side += 2)
+        {
+            string suffix = side < 0 ? "L" : "R";
+            Vector3 lobePos = new Vector3(side * lobeCenterX, 0f, lobeOffsetZ);
+            Vector3 lobeScale = new Vector3(lobeWidth, flukeThickness, flukeChord);
+            // Sweep each lobe outward-back so the fluke forms a shallow V.
+            Quaternion lobeRot = Quaternion.Euler(0f, side * flukeSweepDeg, 0f);
+            MakePrim(PrimitiveType.Cube, $"Fluke{suffix}", tailTip, lobePos, lobeScale, lobeRot, flukeColor);
+        }
     }
 
     Transform MakeBone(string name, Transform parent, Vector3 localPos, Transform anchor, float baseSmoothTime, MermaidBoneChain chain)
@@ -213,6 +284,8 @@ public class MermaidBootstrap : MonoBehaviour
         hipColor   = new Color(0.50f, 0.32f, 0.10f);
         jointColor = new Color(0.93f, 0.78f, 0.62f);
         handColor  = new Color(0.93f, 0.78f, 0.62f);
+        tailColor  = new Color(0.45f, 0.28f, 0.10f);
+        flukeColor = new Color(0.30f, 0.18f, 0.07f);
     }
 
     static GameObject MakePrim(PrimitiveType t, string name, Transform parent,

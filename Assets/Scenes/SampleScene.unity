@@ -464,8 +464,35 @@ MonoBehaviour:
   skinColor: {r: 0.95, g: 0.82, b: 0.72, a: 1}
   torsoColor: {r: 0.35, g: 0.55, b: 0.85, a: 1}
   hipColor: {r: 0.25, g: 0.45, b: 0.75, a: 1}
+  jointColor: {r: 0.55, g: 0.4, b: 0.7, a: 1}
+  handColor: {r: 0.95, g: 0.6, b: 0.45, a: 1}
+  tailColor: {r: 0.45, g: 0.28, b: 0.1, a: 1}
+  flukeColor: {r: 0.3, g: 0.18, b: 0.07, a: 1}
   spawnPosition: {x: 0, y: 0, z: 0}
+  porpoiseAmplitude: 0.35
+  porpoiseFrequency: 0.9
+  cruiseSpeed: 3
+  globalSmoothMultiplier: 0.37
+  neckSmoothTime: 0.15
+  torsoSmoothTime: 0.3
+  hipSmoothTime: 0.5
+  shoulderSmoothTime: 0.2
+  elbowSmoothTime: 0.4
+  handSmoothTime: 0.7
+  handMaxBendAngleDeg: 30
+  elbowMaxBendAngleDeg: 2
+  tailSegments: 8
+  tailLength: 1.6
+  tailBaseRadius: 0.42
+  tailTipRadius: 0.1
+  tailBaseSmoothTime: 0.18
+  tailTipSmoothTime: 0.55
+  flukeSpan: 0.85
+  flukeChord: 0.45
+  flukeThickness: 0.06
+  flukeSweepDeg: 12
   root: {fileID: 0}
+  driver: {fileID: 0}
   headPoint: {fileID: 0}
   hipPoint: {fileID: 0}
 --- !u!4 &1060775002
