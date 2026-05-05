@@ -36,12 +36,12 @@ public class MermaidBootstrap : MonoBehaviour
     public float handSmoothTime = 0.70f;
 
     [Header("Joint Constraints (live-editable)")]
-    [Tooltip("Maximum angle (degrees) the hand can deviate from its rest direction relative to the elbow. Lower = stiffer; prevents the lower arm from bending backward past natural. 60–80° looks natural; 180 = no limit.")]
+    [Tooltip("Asymmetric bend cone for the lower arm at the elbow. The hand is clamped to within this many degrees of its rest direction in the BACKWARD and SIDEWAYS directions. The NATURAL FOLD direction (forward) is always unrestricted. 30 = fairly stiff in the backward direction; 60 = looser; 180 = no constraint.")]
     [Range(0f, 180f)]
-    public float handMaxBendAngleDeg = 70f;
-    [Tooltip("Same for the elbow relative to the shoulder. Set high (~120) to allow free upper-arm swing.")]
+    public float handMaxBendAngleDeg = 30f;
+    [Tooltip("Symmetric bend cone for the elbow relative to the shoulder, in degrees from rest direction. 180 = no constraint.")]
     [Range(0f, 180f)]
-    public float elbowMaxBendAngleDeg = 120f;
+    public float elbowMaxBendAngleDeg = 180f;
 
     [Header("Anchors (populated at runtime)")]
     public Transform root;
@@ -147,6 +147,10 @@ public class MermaidBootstrap : MonoBehaviour
             var elbowMB = elbow.GetComponent<MermaidBone>();
             var handMB = hand.GetComponent<MermaidBone>();
             elbowMB.maxBendAngleDeg = elbowMaxBendAngleDeg;
+            // Asymmetric cone on the hand: tight in backward/sideways directions, but
+            // freely opens up in the natural fold direction. Shoulder is the reference
+            // so the cone knows which way "forward fold" points.
+            handMB.bendReferenceAnchor = shoulder;
             handMB.maxBendAngleDeg = handMaxBendAngleDeg;
             if (side < 0) { elbowL = elbowMB; handL = handMB; }
             else          { elbowR = elbowMB; handR = handMB; }
