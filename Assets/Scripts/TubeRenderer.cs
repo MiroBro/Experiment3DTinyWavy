@@ -11,9 +11,11 @@ public class TubeRenderer : MonoBehaviour
     [Tooltip("Number of sides around the tube cross-section. Higher = smoother silhouette.")]
     [Range(3, 32)]
     public int sides = 16;
-    [Tooltip("Cross-section aspect ratio. 1 = round; <1 = flat (wide horizontal, thin vertical) for a fluke; >1 = tall narrow.")]
+    [Tooltip("Cross-section aspect ratio. 1 = round; <1 = flat (wide horizontal, thin vertical) for a fluke; >1 = tall narrow. Used as a fallback if aspectRatios is null/empty.")]
     [Range(0.05f, 4f)]
     public float aspectRatio = 1f;
+    [Tooltip("Optional per-control-point aspect ratio. If set and matches points length, this overrides the single aspectRatio above. Lets you taper from round at one end to flat at the other.")]
+    public float[] aspectRatios;
     public enum FrameMode { ParallelTransport, WorldUpAligned }
     [Tooltip("ParallelTransport: smooth, no pinching — best for ROUND tubes that wave through any orientation. WorldUpAligned: keeps the cross-section's wide axis horizontal — best for FLAT flukes/wings so they don't twist around their own axis.")]
     public FrameMode frameMode = FrameMode.ParallelTransport;
@@ -153,10 +155,14 @@ public class TubeRenderer : MonoBehaviour
                 ? radii[i]
                 : (radii != null && radii.Length > 0 ? radii[radii.Length - 1] : 0.1f);
 
+            float ar = aspectRatio;
+            if (aspectRatios != null && aspectRatios.Length > 0)
+                ar = (i < aspectRatios.Length) ? aspectRatios[i] : aspectRatios[aspectRatios.Length - 1];
+
             for (int k = 0; k < S; k++)
             {
                 float angle = k * 2f * Mathf.PI / S;
-                Vector3 dir = Mathf.Cos(angle) * r + Mathf.Sin(angle) * u * aspectRatio;
+                Vector3 dir = Mathf.Cos(angle) * r + Mathf.Sin(angle) * u * ar;
                 vertsBuf[v++] = localPts[i] + dir * radius;
             }
             prevTangent = t;

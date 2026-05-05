@@ -79,7 +79,7 @@ public class MermaidBootstrap : MonoBehaviour
     public float flukeFlowMultiplier = 1f;
 
     [Header("Hair (live-editable; some fields rebuild the hair on change)")]
-    [Range(1, 40)]
+    [Range(1, 120)]
     public int hairStrandCount = 14;
     [Range(3, 48)]
     public int hairBonesPerStrand = 8;
@@ -89,12 +89,19 @@ public class MermaidBootstrap : MonoBehaviour
     public float hairLengthVariance = 0.20f;
     [Tooltip("Position of the hair root in the head's local frame. Live: drag in Inspector to move where the hair attaches to the head, no rebuild needed.")]
     public Vector3 hairRootOffset = new Vector3(0f, 0.20f, -0.25f);
+    [Tooltip("Strands' scalp positions are spread within this radius (head local units) around the hair root, on the X-Y plane. Higher = wider scalp, fuller look. Set 0 to put all strands at one point.")]
+    [Range(0f, 0.30f)]
+    public float hairScalpRadius = 0.10f;
     [Tooltip("Base direction strands extend from the scalp, in the head's local frame. (0,0,-1) = straight back. (0, 0.3, -1) = arc up-then-back so strands stay above the body. Per-strand pitch/yaw randomness is applied on top.")]
     public Vector3 hairBaseDirection = new Vector3(0f, 0f, -1f);
     [Tooltip("Hair strand radius along its length. X = 0 at scalp, 1 at tip.")]
     public AnimationCurve hairRadiusCurve = new AnimationCurve(
         new Keyframe(0f, 0.020f),
         new Keyframe(1f, 0.008f));
+    [Tooltip("Hair strand FLATNESS along its length. 1 = round, <1 = flat (ribbon-like). Edit to start round at the scalp and flatten toward the tip, or any custom shape.")]
+    public AnimationCurve hairAspectCurve = new AnimationCurve(
+        new Keyframe(0f, 1f),
+        new Keyframe(1f, 1f));
     [Range(3, 12)]
     public int hairTubeSides = 6;
     public float hairBaseSmoothTime = 0.10f;
@@ -142,6 +149,7 @@ public class MermaidBootstrap : MonoBehaviour
     readonly HashSet<MermaidBone> hairBoneSet = new HashSet<MermaidBone>();
     readonly List<TubeRenderer> hairTubes = new List<TubeRenderer>();
     readonly List<float[]> hairTubeRadiiList = new List<float[]>();
+    readonly List<float[]> hairTubeAspectsList = new List<float[]>();
 
     // Hair-body collision state.
     readonly List<MermaidBone> tailBonesOrdered = new List<MermaidBone>();
@@ -163,6 +171,7 @@ public class MermaidBootstrap : MonoBehaviour
     float _lastHairLengthVariance = float.NaN;
     Vector3 _lastHairBaseDirection = new Vector3(float.NaN, 0f, 0f);
     bool _lastHairAvoidsHead;
+    float _lastHairScalpRadius = float.NaN;
 
     void Awake()
     {
@@ -185,6 +194,7 @@ public class MermaidBootstrap : MonoBehaviour
         _lastHairSeed = hairSeed;
         _lastHairLengthVariance = hairLengthVariance;
         _lastHairBaseDirection = hairBaseDirection;
+        _lastHairScalpRadius = hairScalpRadius;
     }
 
     bool TailFlukeShapeChanged()
@@ -204,7 +214,8 @@ public class MermaidBootstrap : MonoBehaviour
             || !Mathf.Approximately(hairSpreadAngle, _lastHairSpreadAngle)
             || hairSeed != _lastHairSeed
             || !Mathf.Approximately(hairLengthVariance, _lastHairLengthVariance)
-            || (hairBaseDirection - _lastHairBaseDirection).sqrMagnitude > 0.0001f;
+            || (hairBaseDirection - _lastHairBaseDirection).sqrMagnitude > 0.0001f
+            || !Mathf.Approximately(hairScalpRadius, _lastHairScalpRadius);
     }
 
     void Update()
@@ -293,11 +304,12 @@ public class MermaidBootstrap : MonoBehaviour
         }
         UpdateHairColliderRadii();
 
-        // 7. Live update hair tubes.
+        // 7. Live update hair tubes (radii + per-ring aspect from curves).
         for (int s = 0; s < hairTubes.Count; s++)
         {
             var tube = hairTubes[s];
             var radii = (s < hairTubeRadiiList.Count) ? hairTubeRadiiList[s] : null;
+            var aspects = (s < hairTubeAspectsList.Count) ? hairTubeAspectsList[s] : null;
             if (tube != null && radii != null)
             {
                 tube.sides = hairTubeSides;
@@ -307,6 +319,8 @@ public class MermaidBootstrap : MonoBehaviour
                 {
                     float t = (n > 1) ? (float)i / (n - 1) : 0f;
                     radii[i] = Mathf.Max(0.001f, hairRadiusCurve.Evaluate(t));
+                    if (aspects != null && i < aspects.Length)
+                        aspects[i] = Mathf.Max(0.01f, hairAspectCurve.Evaluate(t));
                 }
             }
         }
@@ -415,6 +429,16 @@ public class MermaidBootstrap : MonoBehaviour
 
         for (int s = 0; s < hairStrandCount; s++)
         {
+            // Per-strand scalp anchor: a small offset from the central scalp point so
+            // strands fan out across an area on the back of the head — no more bald
+            // patches around the central point.
+            Vector2 disc = UnityEngine.Random.insideUnitCircle * hairScalpRadius;
+            var strandScalpGO = new GameObject($"ScalpAnchor{s:D2}");
+            strandScalpGO.transform.SetParent(scalpAnchor, false);
+            strandScalpGO.transform.localPosition = new Vector3(disc.x, disc.y, 0f);
+            Transform strandScalp = strandScalpGO.transform;
+            hairGameObjects.Add(strandScalpGO);
+
             // Per-strand variance — direction (yaw spread + small pitch wobble) and length.
             float t = (hairStrandCount > 1) ? (float)s / (hairStrandCount - 1) : 0.5f;
             float yawDeg = Mathf.Lerp(-hairSpreadAngle, hairSpreadAngle, t)
@@ -429,10 +453,10 @@ public class MermaidBootstrap : MonoBehaviour
 
             int N = hairBonesPerStrand + 1;
             Transform[] tubePoints = new Transform[N];
-            tubePoints[0] = scalpAnchor;
+            tubePoints[0] = strandScalp;
 
-            Transform prev = scalpAnchor;
-            Vector3 prevWorldPos = scalpAnchor.position;
+            Transform prev = strandScalp;
+            Vector3 prevWorldPos = strandScalp.position;
 
             for (int i = 0; i < hairBonesPerStrand; i++)
             {
@@ -456,8 +480,10 @@ public class MermaidBootstrap : MonoBehaviour
             }
 
             var tube = MakeTube($"HairTube{s:D2}", root, tubePoints, hairColor, hairTubeSides, 1f);
+            tube.aspectRatios = new float[N]; // per-ring aspect, populated each frame from hairAspectCurve
             hairTubes.Add(tube);
             hairTubeRadiiList.Add(tube.radii);
+            hairTubeAspectsList.Add(tube.aspectRatios);
             hairGameObjects.Add(tube.gameObject);
         }
 
@@ -481,6 +507,7 @@ public class MermaidBootstrap : MonoBehaviour
         hairBoneSet.Clear();
         hairTubes.Clear();
         hairTubeRadiiList.Clear();
+        hairTubeAspectsList.Clear();
 
         for (int i = 0; i < hairGameObjects.Count; i++)
         {

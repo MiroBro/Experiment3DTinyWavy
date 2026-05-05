@@ -480,8 +480,8 @@ MonoBehaviour:
   shoulderSmoothTime: 0.2
   elbowSmoothTime: 0.4
   handSmoothTime: 0.7
-  handMaxBendAngleDeg: 30
-  elbowMaxBendAngleDeg: 2
+  handMaxBendAngleDeg: 31.9
+  elbowMaxBendAngleDeg: 97.2
   tailSegments: 24
   tailLength: 2.98
   tailRadiusCurve:
@@ -591,10 +591,11 @@ MonoBehaviour:
   flukeFlowMultiplier: 1.52
   hairStrandCount: 7
   hairBonesPerStrand: 34
-  hairStrandLength: 2.01
+  hairStrandLength: 3
   hairLengthVariance: 0.221
-  hairRootOffset: {x: 0, y: 0.08, z: 0.46}
-  hairBaseDirection: {x: 0, y: 0.61, z: -1}
+  hairRootOffset: {x: 0, y: 0.47, z: 0.26}
+  hairScalpRadius: 0.3
+  hairBaseDirection: {x: 0, y: 0.22, z: -1}
   hairRadiusCurve:
     serializedVersion: 2
     m_Curve:
@@ -619,11 +620,35 @@ MonoBehaviour:
     m_PreInfinity: 2
     m_PostInfinity: 2
     m_RotationOrder: 4
+  hairAspectCurve:
+    serializedVersion: 2
+    m_Curve:
+    - serializedVersion: 3
+      time: -0.030029297
+      value: 0.8590393
+      inSlope: -0.858219
+      outSlope: -0.858219
+      tangentMode: 34
+      weightedMode: 0
+      inWeight: 0
+      outWeight: 0.33333334
+    - serializedVersion: 3
+      time: 0.9624634
+      value: 0.0072631836
+      inSlope: -0.858219
+      outSlope: -0.858219
+      tangentMode: 34
+      weightedMode: 0
+      inWeight: 0.33333334
+      outWeight: 0
+    m_PreInfinity: 2
+    m_PostInfinity: 2
+    m_RotationOrder: 4
   hairTubeSides: 12
   hairBaseSmoothTime: 0.1
   hairTipSmoothTime: 0.5
   hairFlowMultiplier: 0.38
-  hairSpreadAngle: 14.3
+  hairSpreadAngle: 39.4
   hairSeed: 168
   hairColliderRadiusMultiplier: 1.05
   hairAvoidsHead: 0
