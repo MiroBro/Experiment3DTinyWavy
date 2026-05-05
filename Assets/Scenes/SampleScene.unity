@@ -468,6 +468,7 @@ MonoBehaviour:
   handColor: {r: 0.95, g: 0.6, b: 0.45, a: 1}
   tailColor: {r: 0.45, g: 0.28, b: 0.1, a: 1}
   flukeColor: {r: 0.3, g: 0.18, b: 0.07, a: 1}
+  hairColor: {r: 0.55, g: 0.18, b: 0.08, a: 1}
   spawnPosition: {x: 0, y: 0, z: 0}
   porpoiseAmplitude: 0.29
   porpoiseFrequency: 0.83
@@ -588,6 +589,39 @@ MonoBehaviour:
   flukeBaseSmoothTime: 0.1
   flukeTipSmoothTime: 0.3
   flukeFlowMultiplier: 1.56
+  hairStrandCount: 40
+  hairBonesPerStrand: 16
+  hairStrandLength: 2.89
+  hairRadiusCurve:
+    serializedVersion: 2
+    m_Curve:
+    - serializedVersion: 3
+      time: 0.0003926917
+      value: 0.22792092
+      inSlope: 0
+      outSlope: 0
+      tangentMode: 0
+      weightedMode: 0
+      inWeight: 0
+      outWeight: 0
+    - serializedVersion: 3
+      time: 1
+      value: 0.008
+      inSlope: 0
+      outSlope: 0
+      tangentMode: 0
+      weightedMode: 0
+      inWeight: 0
+      outWeight: 0
+    m_PreInfinity: 2
+    m_PostInfinity: 2
+    m_RotationOrder: 4
+  hairTubeSides: 12
+  hairBaseSmoothTime: 0.1
+  hairTipSmoothTime: 0.5
+  hairFlowMultiplier: 1
+  hairSpreadAngle: 14.3
+  hairSeed: 168
   root: {fileID: 0}
   driver: {fileID: 0}
   headPoint: {fileID: 0}
