@@ -17,61 +17,58 @@ public class MermaidBootstrap : MonoBehaviour
     public Vector3 spawnPosition = Vector3.zero;
 
     [Header("Swim Motion (live-editable)")]
-    [Tooltip("Vertical bob amplitude in metres. Higher = bigger up/down motion.")]
     public float porpoiseAmplitude = 0.35f;
-    [Tooltip("Cycles per second. Higher = faster bob.")]
     public float porpoiseFrequency = 0.9f;
-    [Tooltip("Virtual forward swim speed. Used by the swimmer to compute the porpoise pitch — higher cruiseSpeed = flatter swim path; lower = more vertical pitch oscillation.")]
     public float cruiseSpeed = 3f;
 
-    [Header("Bone Lag (higher = more dramatic ragdoll wave) — live-editable")]
-    [Tooltip("Single overall floppy-ness knob. Multiplies every per-bone smoothTime below. 1.0 = the tuned defaults. Bump to 1.5–2 for very loose; drop to 0.5 for stiffer.")]
+    [Header("Bone Lag (live-editable)")]
+    [Tooltip("Multiplies every per-bone smoothTime. 1.0 = tuned defaults.")]
     public float globalSmoothMultiplier = 1f;
 
-    [Tooltip("Lag of the neck behind the head, in seconds.")]
     public float neckSmoothTime = 0.15f;
     public float torsoSmoothTime = 0.30f;
     public float hipSmoothTime = 0.50f;
-    [Tooltip("0 = shoulders are rigidly glued to the upper torso (recommended).")]
     public float shoulderSmoothTime = 0f;
     public float elbowSmoothTime = 0.40f;
     public float handSmoothTime = 0.70f;
 
     [Header("Joint Constraints (live-editable)")]
-    [Tooltip("Asymmetric bend cone for the lower arm at the elbow. The hand is clamped to within this many degrees of its rest direction in the BACKWARD and SIDEWAYS directions. The NATURAL FOLD direction (forward) is always unrestricted. 30 = fairly stiff in the backward direction; 60 = looser; 180 = no constraint.")]
     [Range(0f, 180f)]
     public float handMaxBendAngleDeg = 30f;
-    [Tooltip("Symmetric bend cone for the elbow relative to the shoulder, in degrees from rest direction. 180 = no constraint.")]
     [Range(0f, 180f)]
     public float elbowMaxBendAngleDeg = 180f;
 
-    [Header("Tail")]
-    [Range(3, 16)]
+    [Header("Tail (live-editable; rebuilds on segments/length change)")]
+    [Range(3, 24)]
     public int tailSegments = 8;
-    [Tooltip("Total length of the tail from hip to fluke base, in metres.")]
     public float tailLength = 1.6f;
-    [Tooltip("Tube radius at the hip end of the tail.")]
-    public float tailBaseRadius = 0.42f;
-    [Tooltip("Tube radius at the fluke end of the tail. Linearly interpolated.")]
-    public float tailTipRadius = 0.10f;
-    [Tooltip("Number of sides around the tail's tube cross-section. Higher = smoother silhouette.")]
+    [Tooltip("Tail radius along its length. X-axis = 0 at the hip, 1 at the tip. Edit this curve to make a thin → thick → thin shape, or any silhouette you like.")]
+    public AnimationCurve tailRadiusCurve = new AnimationCurve(
+        new Keyframe(0f, 0.42f),
+        new Keyframe(1f, 0.10f));
     [Range(6, 32)]
     public int tailTubeSides = 16;
-    [Tooltip("smoothTime of the first tail segment (small lag).")]
     public float tailBaseSmoothTime = 0.18f;
-    [Tooltip("smoothTime of the last tail segment (most lag — whip-like tip).")]
     public float tailTipSmoothTime = 0.55f;
 
-    [Header("Fluke")]
-    [Tooltip("Total left-right span of the fluke (the horizontal fluke at the tail tip).")]
-    public float flukeSpan = 0.85f;
-    [Tooltip("Front-to-back depth of each fluke lobe.")]
-    public float flukeChord = 0.45f;
-    [Tooltip("Vertical thickness of the fluke (it's a flat horizontal fin).")]
-    public float flukeThickness = 0.06f;
-    [Tooltip("Outward sweep angle of each fluke lobe in degrees (gives the V-shape).")]
-    [Range(0f, 45f)]
-    public float flukeSweepDeg = 12f;
+    [Header("Fluke (live-editable; rebuilds on bones/span/sweep change)")]
+    [Range(2, 6)]
+    public int flukeBonesPerLobe = 3;
+    [Tooltip("How far each fluke lobe extends sideways from the tail tip.")]
+    public float flukeSpan = 0.55f;
+    [Tooltip("How far back (along -Z) each fluke lobe sweeps from the tail tip.")]
+    public float flukeSweepZ = -0.30f;
+    [Tooltip("Fluke radius along the lobe length. Same idea as tailRadiusCurve.")]
+    public AnimationCurve flukeRadiusCurve = new AnimationCurve(
+        new Keyframe(0f, 0.18f),
+        new Keyframe(1f, 0.04f));
+    [Tooltip("0.05 = very flat horizontal fluke; 1 = round.")]
+    [Range(0.05f, 1f)]
+    public float flukeAspectRatio = 0.20f;
+    [Range(6, 24)]
+    public int flukeTubeSides = 12;
+    public float flukeBaseSmoothTime = 0.10f;
+    public float flukeTipSmoothTime = 0.30f;
 
     [Header("Anchors (populated at runtime)")]
     public Transform root;
@@ -79,23 +76,55 @@ public class MermaidBootstrap : MonoBehaviour
     public Transform headPoint;
     public Transform hipPoint;
 
-    // Runtime registry of bones with their *base* smoothTime — used to re-multiply
-    // by globalSmoothMultiplier each frame so the multiplier is live-editable.
     class BoneEntry { public MermaidBone bone; public float baseSmoothTime; }
     readonly List<BoneEntry> boneEntries = new List<BoneEntry>();
 
     MermaidSwimmer swimmer;
     MermaidBone elbowL, elbowR, handL, handR;
+    MermaidBoneChain chain;
+
+    // Tail/fluke runtime state — tracked separately so we can rebuild on the fly.
+    readonly List<GameObject> tailGameObjects = new List<GameObject>();
+    readonly List<MermaidBone> tailFlukeBones = new List<MermaidBone>();
+    TubeRenderer tailTube;
+    float[] tailTubeRadii;
+    readonly TubeRenderer[] flukeTubes = new TubeRenderer[2];
+    readonly float[][] flukeTubeRadii = new float[2][];
+
+    int _lastTailSegments = -1;
+    float _lastTailLength = float.NaN;
+    int _lastFlukeBonesPerLobe = -1;
+    float _lastFlukeSpan = float.NaN;
+    float _lastFlukeSweepZ = float.NaN;
 
     void Awake()
     {
         BuildMermaid();
         WireCamera();
+        SnapshotShapeValues();
+    }
+
+    void SnapshotShapeValues()
+    {
+        _lastTailSegments = tailSegments;
+        _lastTailLength = tailLength;
+        _lastFlukeBonesPerLobe = flukeBonesPerLobe;
+        _lastFlukeSpan = flukeSpan;
+        _lastFlukeSweepZ = flukeSweepZ;
+    }
+
+    bool ShapeValuesChanged()
+    {
+        return tailSegments != _lastTailSegments
+            || !Mathf.Approximately(tailLength, _lastTailLength)
+            || flukeBonesPerLobe != _lastFlukeBonesPerLobe
+            || !Mathf.Approximately(flukeSpan, _lastFlukeSpan)
+            || !Mathf.Approximately(flukeSweepZ, _lastFlukeSweepZ);
     }
 
     void Update()
     {
-        // Push live-editable values onto the runtime components each frame.
+        // 1. Live smoothTime updates (everywhere — spine/arms/tail/fluke).
         float m = Mathf.Max(0f, globalSmoothMultiplier);
         for (int i = 0; i < boneEntries.Count; i++)
         {
@@ -103,6 +132,7 @@ public class MermaidBootstrap : MonoBehaviour
             if (e.bone != null) e.bone.smoothTime = e.baseSmoothTime * m;
         }
 
+        // 2. Live swimmer params.
         if (swimmer != null)
         {
             swimmer.porpoiseAmplitude = porpoiseAmplitude;
@@ -110,10 +140,49 @@ public class MermaidBootstrap : MonoBehaviour
             swimmer.cruiseSpeed = cruiseSpeed;
         }
 
+        // 3. Live joint constraints.
         if (handL != null) handL.maxBendAngleDeg = handMaxBendAngleDeg;
         if (handR != null) handR.maxBendAngleDeg = handMaxBendAngleDeg;
         if (elbowL != null) elbowL.maxBendAngleDeg = elbowMaxBendAngleDeg;
         if (elbowR != null) elbowR.maxBendAngleDeg = elbowMaxBendAngleDeg;
+
+        // 4. Detect tail/fluke shape param changes — rebuild the tail and fluke
+        //    chain when segments / length / fluke sweep change.
+        if (ShapeValuesChanged())
+        {
+            RebuildTailAndFluke();
+            SnapshotShapeValues();
+        }
+
+        // 5. Live update tail tube (sides + radii from curve).
+        if (tailTube != null && tailTubeRadii != null)
+        {
+            tailTube.sides = tailTubeSides;
+            int n = tailTubeRadii.Length;
+            for (int i = 0; i < n; i++)
+            {
+                float t = (n > 1) ? (float)i / (n - 1) : 0f;
+                tailTubeRadii[i] = Mathf.Max(0.001f, tailRadiusCurve.Evaluate(t));
+            }
+        }
+
+        // 6. Live update fluke tubes.
+        for (int s = 0; s < 2; s++)
+        {
+            var tube = flukeTubes[s];
+            var radii = flukeTubeRadii[s];
+            if (tube != null && radii != null)
+            {
+                tube.sides = flukeTubeSides;
+                tube.aspectRatio = flukeAspectRatio;
+                int n = radii.Length;
+                for (int i = 0; i < n; i++)
+                {
+                    float t = (n > 1) ? (float)i / (n - 1) : 0f;
+                    radii[i] = Mathf.Max(0.001f, flukeRadiusCurve.Evaluate(t));
+                }
+            }
+        }
     }
 
     void BuildMermaid()
@@ -121,7 +190,7 @@ public class MermaidBootstrap : MonoBehaviour
         var groupGO = new GameObject("Mermaid");
         groupGO.transform.position = spawnPosition;
         root = groupGO.transform;
-        var chain = groupGO.AddComponent<MermaidBoneChain>();
+        chain = groupGO.AddComponent<MermaidBoneChain>();
 
         var headGO = new GameObject("Head");
         headGO.transform.SetParent(root, false);
@@ -177,9 +246,6 @@ public class MermaidBootstrap : MonoBehaviour
             var elbowMB = elbow.GetComponent<MermaidBone>();
             var handMB = hand.GetComponent<MermaidBone>();
             elbowMB.maxBendAngleDeg = elbowMaxBendAngleDeg;
-            // Asymmetric cone on the hand: tight in backward/sideways directions, but
-            // freely opens up in the natural fold direction. Shoulder is the reference
-            // so the cone knows which way "forward fold" points.
             handMB.bendReferenceAnchor = shoulder;
             handMB.maxBendAngleDeg = handMaxBendAngleDeg;
             if (side < 0) { elbowL = elbowMB; handL = handMB; }
@@ -196,9 +262,14 @@ public class MermaidBootstrap : MonoBehaviour
             MakeLink("LowerArmLink" + suffix, root, elbow, hand, 0.07f, skinColor);
         }
 
-        BuildTail(root, hipBone, chain);
-
+        // Initialize spine + arm bones with their captured rest poses.
+        // (Tail and fluke bones use explicit init in MakeBoneAtRest, so they're
+        //  added AFTER this point and are not re-initialized.)
         chain.Initialize();
+
+        BuildTail(root, hipBone, chain);
+        Transform tailTip = (tailFlukeBones.Count > 0) ? tailFlukeBones[tailFlukeBones.Count - 1].transform : hipBone;
+        BuildFluke(root, tailTip, chain);
     }
 
     void BuildTail(Transform root, Transform hipBone, MermaidBoneChain chain)
@@ -207,13 +278,9 @@ public class MermaidBootstrap : MonoBehaviour
         float segLen = tailLength / Mathf.Max(1, tailSegments);
         float startZ = hipBone.localPosition.z;
 
-        // Single continuous tube mesh covering hip + every tail bone — no more
-        // visible joins between cylinders, just one smooth tapered tail.
         int N = tailSegments + 1;
         Transform[] tubePoints = new Transform[N];
-        float[] tubeRadii = new float[N];
         tubePoints[0] = hipBone;
-        tubeRadii[0] = tailBaseRadius;
 
         for (int i = 0; i < tailSegments; i++)
         {
@@ -221,58 +288,97 @@ public class MermaidBootstrap : MonoBehaviour
             float smoothTime = Mathf.Lerp(tailBaseSmoothTime, tailTipSmoothTime, tBone);
 
             float z = startZ - segLen * (i + 1);
-            var seg = MakeBone($"Tail{i:D2}", root, new Vector3(0f, 0f, z), prev, smoothTime, chain);
+            Vector3 worldRestPos = root.position + new Vector3(0f, 0f, z);
+            Vector3 localOffsetFromPrev = new Vector3(0f, 0f, -segLen);
+            var seg = MakeBoneAtRest($"Tail{i:D2}", root, worldRestPos, prev, localOffsetFromPrev, smoothTime, chain);
 
             tubePoints[i + 1] = seg;
-            tubeRadii[i + 1] = Mathf.Lerp(tailBaseRadius, tailTipRadius, tBone);
+            tailFlukeBones.Add(seg.GetComponent<MermaidBone>());
+            tailGameObjects.Add(seg.gameObject);
 
             prev = seg;
         }
 
-        MakeTube("TailTube", root, tubePoints, tubeRadii, tailColor, tailTubeSides);
-
-        BuildFluke(prev);
+        tailTube = MakeTube("TailTube", root, tubePoints, tailColor, tailTubeSides, 1f);
+        tailTubeRadii = tailTube.radii;
+        tailGameObjects.Add(tailTube.gameObject);
     }
 
-    void MakeTube(string name, Transform parent, Transform[] tubePoints, float[] tubeRadii, Color tint, int sides)
+    void BuildFluke(Transform root, Transform tailTip, MermaidBoneChain chain)
     {
-        var go = new GameObject(name);
-        go.transform.SetParent(parent, false);
-        go.AddComponent<MeshFilter>();
-        var mr = go.AddComponent<MeshRenderer>();
+        float spanDelta = flukeSpan / Mathf.Max(1, flukeBonesPerLobe);
+        float sweepDelta = flukeSweepZ / Mathf.Max(1, flukeBonesPerLobe);
 
-        // Snag the URP/Lit (or built-in) default material from a temp primitive so the
-        // tube renders the same as the other body parts.
-        var temp = GameObject.CreatePrimitive(PrimitiveType.Cube);
-        var srcMat = temp.GetComponent<Renderer>().sharedMaterial;
-        var mat = new Material(srcMat);
-        Destroy(temp);
-        if (mat.HasProperty("_BaseColor")) mat.SetColor("_BaseColor", tint);
-        if (mat.HasProperty("_Color")) mat.color = tint;
-        mr.sharedMaterial = mat;
-
-        var tube = go.AddComponent<TubeRenderer>();
-        tube.points = tubePoints;
-        tube.radii = tubeRadii;
-        tube.sides = sides;
-        tube.capEnds = true;
-    }
-
-    void BuildFluke(Transform tailTip)
-    {
-        // Two flat horizontal lobes attached to the tail's last bone.
-        // They inherit the tip's rotation, so they slap up/down with the tail wave.
-        float lobeWidth = flukeSpan * 0.45f;
-        float lobeCenterX = flukeSpan * 0.30f;
-        float lobeOffsetZ = -flukeChord * 0.5f;
-        for (int side = -1; side <= 1; side += 2)
+        for (int s = 0; s < 2; s++)
         {
+            int side = (s == 0) ? -1 : 1;
             string suffix = side < 0 ? "L" : "R";
-            Vector3 lobePos = new Vector3(side * lobeCenterX, 0f, lobeOffsetZ);
-            Vector3 lobeScale = new Vector3(lobeWidth, flukeThickness, flukeChord);
-            // Sweep each lobe outward-back so the fluke forms a shallow V.
-            Quaternion lobeRot = Quaternion.Euler(0f, side * flukeSweepDeg, 0f);
-            MakePrim(PrimitiveType.Cube, $"Fluke{suffix}", tailTip, lobePos, lobeScale, lobeRot, flukeColor);
+
+            int N = flukeBonesPerLobe + 1;
+            Transform[] tubePoints = new Transform[N];
+            tubePoints[0] = tailTip;
+            Transform prev = tailTip;
+            Vector3 prevWorldPos = tailTip.position;
+
+            for (int i = 0; i < flukeBonesPerLobe; i++)
+            {
+                float tBone = (i + 1) / (float)flukeBonesPerLobe;
+                float smoothTime = Mathf.Lerp(flukeBaseSmoothTime, flukeTipSmoothTime, tBone);
+
+                Vector3 boneRestPos = prevWorldPos + new Vector3(side * spanDelta, 0f, sweepDelta);
+                Vector3 localOffsetFromPrev = new Vector3(side * spanDelta, 0f, sweepDelta);
+                var seg = MakeBoneAtRest($"Fluke{suffix}{i:D2}", root, boneRestPos, prev, localOffsetFromPrev, smoothTime, chain);
+
+                tubePoints[i + 1] = seg;
+                tailFlukeBones.Add(seg.GetComponent<MermaidBone>());
+                tailGameObjects.Add(seg.gameObject);
+
+                prev = seg;
+                prevWorldPos = boneRestPos;
+            }
+
+            var tube = MakeTube($"FlukeTube{suffix}", root, tubePoints, flukeColor, flukeTubeSides, flukeAspectRatio);
+            flukeTubes[s] = tube;
+            flukeTubeRadii[s] = tube.radii;
+            tailGameObjects.Add(tube.gameObject);
+        }
+    }
+
+    void RebuildTailAndFluke()
+    {
+        if (root == null || chain == null) return;
+
+        // Detach old tail/fluke bones from the chain registry.
+        for (int i = 0; i < tailFlukeBones.Count; i++)
+        {
+            var bone = tailFlukeBones[i];
+            if (bone != null)
+            {
+                chain.bones.Remove(bone);
+                boneEntries.RemoveAll(e => e.bone == bone);
+            }
+        }
+        tailFlukeBones.Clear();
+
+        // Destroy old GameObjects (tail bones, tail tube, fluke bones, fluke tubes).
+        for (int i = 0; i < tailGameObjects.Count; i++)
+        {
+            if (tailGameObjects[i] != null) Destroy(tailGameObjects[i]);
+        }
+        tailGameObjects.Clear();
+
+        tailTube = null;
+        tailTubeRadii = null;
+        flukeTubes[0] = flukeTubes[1] = null;
+        flukeTubeRadii[0] = flukeTubeRadii[1] = null;
+
+        // Rebuild from current values.
+        var hipBone = (hipPoint != null) ? hipPoint : root.Find("Hip");
+        if (hipBone != null)
+        {
+            BuildTail(root, hipBone, chain);
+            Transform tailTip = (tailFlukeBones.Count > 0) ? tailFlukeBones[tailFlukeBones.Count - 1].transform : hipBone;
+            BuildFluke(root, tailTip, chain);
         }
     }
 
@@ -284,6 +390,20 @@ public class MermaidBootstrap : MonoBehaviour
         var bone = go.AddComponent<MermaidBone>();
         bone.anchor = anchor;
         bone.smoothTime = baseSmoothTime * Mathf.Max(0f, globalSmoothMultiplier);
+        chain.bones.Add(bone);
+        boneEntries.Add(new BoneEntry { bone = bone, baseSmoothTime = baseSmoothTime });
+        return go.transform;
+    }
+
+    Transform MakeBoneAtRest(string name, Transform parent, Vector3 worldRestPos, Transform anchor, Vector3 localOffsetFromAnchor, float baseSmoothTime, MermaidBoneChain chain)
+    {
+        var go = new GameObject(name);
+        go.transform.SetParent(parent, false);
+        go.transform.position = worldRestPos;
+        var bone = go.AddComponent<MermaidBone>();
+        bone.anchor = anchor;
+        bone.smoothTime = baseSmoothTime * Mathf.Max(0f, globalSmoothMultiplier);
+        bone.InitializeWithExplicitOffset(localOffsetFromAnchor, Quaternion.identity);
         chain.bones.Add(bone);
         boneEntries.Add(new BoneEntry { bone = bone, baseSmoothTime = baseSmoothTime });
         return go.transform;
@@ -301,6 +421,31 @@ public class MermaidBootstrap : MonoBehaviour
         link.b = b;
         link.radius = radius;
         Tint(go, tint);
+    }
+
+    TubeRenderer MakeTube(string name, Transform parent, Transform[] tubePoints, Color tint, int sides, float aspectRatio)
+    {
+        var go = new GameObject(name);
+        go.transform.SetParent(parent, false);
+        go.AddComponent<MeshFilter>();
+        var mr = go.AddComponent<MeshRenderer>();
+
+        // Snag the URP/Lit (or built-in) default material from a temp primitive.
+        var temp = GameObject.CreatePrimitive(PrimitiveType.Cube);
+        var srcMat = temp.GetComponent<Renderer>().sharedMaterial;
+        var mat = new Material(srcMat);
+        Destroy(temp);
+        if (mat.HasProperty("_BaseColor")) mat.SetColor("_BaseColor", tint);
+        if (mat.HasProperty("_Color")) mat.color = tint;
+        mr.sharedMaterial = mat;
+
+        var tube = go.AddComponent<TubeRenderer>();
+        tube.points = tubePoints;
+        tube.radii = new float[tubePoints.Length];
+        tube.sides = sides;
+        tube.aspectRatio = aspectRatio;
+        tube.capEnds = true;
+        return tube;
     }
 
     void WireCamera()

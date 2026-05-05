@@ -35,10 +35,26 @@ public class MermaidBone : MonoBehaviour
     bool hasFoldData;
 
     /// <summary>
+    /// Skip the standard "capture from current pose" Initialize and provide explicit
+    /// rest offsets directly. Useful when a bone is rebuilt mid-play and the anchor
+    /// is no longer at its rest pose (so the standard Initialize would capture wrong
+    /// values).
+    /// </summary>
+    public void InitializeWithExplicitOffset(Vector3 explicitLocalOffset, Quaternion explicitLocalRotOffset)
+    {
+        localOffset = explicitLocalOffset;
+        localRotOffset = explicitLocalRotOffset;
+        vel = Vector3.zero;
+        hasFoldData = false;
+        initialized = true;
+    }
+
+    /// <summary>
     /// Snapshot the rest offset from the anchor. Call after both bones are positioned in their rest pose.
     /// </summary>
     public void Initialize()
     {
+        if (initialized) return;
         initialized = true;
         if (anchor == null) return;
         localOffset = anchor.InverseTransformPoint(transform.position);

@@ -461,9 +461,9 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: fdade0cf791e4444f85f45ddd265d231, type: 3}
   m_Name: 
   m_EditorClassIdentifier: Assembly-CSharp::MermaidBootstrap
-  skinColor: {r: 0.95, g: 0.82, b: 0.72, a: 1}
-  torsoColor: {r: 0.35, g: 0.55, b: 0.85, a: 1}
-  hipColor: {r: 0.25, g: 0.45, b: 0.75, a: 1}
+  skinColor: {r: 0.62352943, g: 0.34117648, b: 0.04705883, a: 1}
+  torsoColor: {r: 0.6666667, g: 0.47058827, b: 0.20784315, a: 1}
+  hipColor: {r: 0.7411765, g: 0.6627451, b: 0.4784314, a: 1}
   jointColor: {r: 0.55, g: 0.4, b: 0.7, a: 1}
   handColor: {r: 0.95, g: 0.6, b: 0.45, a: 1}
   tailColor: {r: 0.45, g: 0.28, b: 0.1, a: 1}
@@ -481,16 +481,84 @@ MonoBehaviour:
   handSmoothTime: 0.7
   handMaxBendAngleDeg: 30
   elbowMaxBendAngleDeg: 2
-  tailSegments: 8
-  tailLength: 1.6
-  tailBaseRadius: 0.42
-  tailTipRadius: 0.1
+  tailSegments: 24
+  tailLength: 2.58
+  tailRadiusCurve:
+    serializedVersion: 2
+    m_Curve:
+    - serializedVersion: 3
+      time: 0.00070301164
+      value: 0.26566488
+      inSlope: 0.43766394
+      outSlope: 0.43766394
+      tangentMode: 0
+      weightedMode: 0
+      inWeight: 0
+      outWeight: 0.12340333
+    - serializedVersion: 3
+      time: 0.2793249
+      value: 0.34534642
+      inSlope: -0.14593509
+      outSlope: -0.14593509
+      tangentMode: 0
+      weightedMode: 0
+      inWeight: 0.12685813
+      outWeight: 0.049879495
+    - serializedVersion: 3
+      time: 0.90885186
+      value: 0.04963854
+      inSlope: -0.22909768
+      outSlope: -0.22909768
+      tangentMode: 0
+      weightedMode: 0
+      inWeight: 0.33333334
+      outWeight: 0.33333334
+    - serializedVersion: 3
+      time: 0.99967384
+      value: 0.003195405
+      inSlope: -0.830725
+      outSlope: -0.830725
+      tangentMode: 0
+      weightedMode: 0
+      inWeight: 0.16782506
+      outWeight: 0
+    m_PreInfinity: 2
+    m_PostInfinity: 2
+    m_RotationOrder: 4
+  tailTubeSides: 16
   tailBaseSmoothTime: 0.18
   tailTipSmoothTime: 0.55
+  flukeBonesPerLobe: 3
   flukeSpan: 0.85
-  flukeChord: 0.45
-  flukeThickness: 0.06
-  flukeSweepDeg: 12
+  flukeSweepZ: -0.3
+  flukeRadiusCurve:
+    serializedVersion: 2
+    m_Curve:
+    - serializedVersion: 3
+      time: 0
+      value: 0.18
+      inSlope: 0
+      outSlope: 0
+      tangentMode: 0
+      weightedMode: 0
+      inWeight: 0
+      outWeight: 0
+    - serializedVersion: 3
+      time: 1
+      value: 0.04
+      inSlope: 0
+      outSlope: 0
+      tangentMode: 0
+      weightedMode: 0
+      inWeight: 0
+      outWeight: 0
+    m_PreInfinity: 2
+    m_PostInfinity: 2
+    m_RotationOrder: 4
+  flukeAspectRatio: 0.243
+  flukeTubeSides: 14
+  flukeBaseSmoothTime: 0.1
+  flukeTipSmoothTime: 0.3
   root: {fileID: 0}
   driver: {fileID: 0}
   headPoint: {fileID: 0}

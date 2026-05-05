@@ -11,6 +11,9 @@ public class TubeRenderer : MonoBehaviour
     [Tooltip("Number of sides around the tube cross-section. Higher = smoother silhouette.")]
     [Range(3, 32)]
     public int sides = 16;
+    [Tooltip("Cross-section aspect ratio. 1 = round; <1 = flat (wide horizontal, thin vertical) for a fluke; >1 = tall narrow.")]
+    [Range(0.05f, 4f)]
+    public float aspectRatio = 1f;
     [Tooltip("Add flat round caps so the tube isn't open at the ends.")]
     public bool capEnds = true;
 
@@ -102,7 +105,7 @@ public class TubeRenderer : MonoBehaviour
             for (int k = 0; k < S; k++)
             {
                 float angle = k * 2f * Mathf.PI / S;
-                Vector3 dir = Mathf.Cos(angle) * r + Mathf.Sin(angle) * u;
+                Vector3 dir = Mathf.Cos(angle) * r + Mathf.Sin(angle) * u * aspectRatio;
                 vertsBuf[v++] = localPts[i] + dir * radius;
             }
         }
