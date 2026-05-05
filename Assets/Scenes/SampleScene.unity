@@ -483,7 +483,7 @@ MonoBehaviour:
   handMaxBendAngleDeg: 30
   elbowMaxBendAngleDeg: 2
   tailSegments: 24
-  tailLength: 2.58
+  tailLength: 2.98
   tailRadiusCurve:
     serializedVersion: 2
     m_Curve:
@@ -539,8 +539,8 @@ MonoBehaviour:
   tailBaseSmoothTime: 0.18
   tailTipSmoothTime: 0.55
   tailFlowMultiplier: 0.3
-  flukeBonesPerLobe: 12
-  flukeSpan: 1.11
+  flukeBonesPerLobe: 21
+  flukeSpan: 1.38
   flukeSweepZ: -1.74
   flukeRadiusCurve:
     serializedVersion: 2
@@ -588,25 +588,25 @@ MonoBehaviour:
   flukeTubeSides: 9
   flukeBaseSmoothTime: 0.1
   flukeTipSmoothTime: 0.3
-  flukeFlowMultiplier: 2.31
-  hairStrandCount: 17
+  flukeFlowMultiplier: 1.52
+  hairStrandCount: 7
   hairBonesPerStrand: 34
-  hairStrandLength: 2.89
+  hairStrandLength: 2.01
   hairLengthVariance: 0.221
-  hairRootOffset: {x: 0, y: 0.15, z: -0.08}
-  hairBaseDirection: {x: 0, y: 0.03, z: -1}
+  hairRootOffset: {x: 0, y: 0.08, z: 0.46}
+  hairBaseDirection: {x: 0, y: 0.61, z: -1}
   hairRadiusCurve:
     serializedVersion: 2
     m_Curve:
     - serializedVersion: 3
-      time: 0.0003926917
-      value: 0.22792092
-      inSlope: 0
-      outSlope: 0
+      time: -0.002838357
+      value: -0.0003772676
+      inSlope: 1.1450415
+      outSlope: 1.1450415
       tangentMode: 0
       weightedMode: 0
       inWeight: 0
-      outWeight: 0
+      outWeight: 0.02963944
     - serializedVersion: 3
       time: 1
       value: 0.008
@@ -626,6 +626,7 @@ MonoBehaviour:
   hairSpreadAngle: 14.3
   hairSeed: 168
   hairColliderRadiusMultiplier: 1.05
+  hairAvoidsHead: 0
   root: {fileID: 0}
   driver: {fileID: 0}
   headPoint: {fileID: 0}

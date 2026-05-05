@@ -56,7 +56,7 @@ public class MermaidBootstrap : MonoBehaviour
     public float tailFlowMultiplier = 1f;
 
     [Header("Fluke (live-editable; rebuilds on bones/span/sweep change)")]
-    [Range(2, 12)]
+    [Range(2, 48)]
     public int flukeBonesPerLobe = 4;
     [Tooltip("How far each fluke lobe extends sideways from the tail tip.")]
     public float flukeSpan = 0.55f;
@@ -110,6 +110,8 @@ public class MermaidBootstrap : MonoBehaviour
     [Tooltip("Multiplier for the body sphere-collider radii that hair gets pushed out of. 1.0 = match the body's actual size; >1 = hair stays a bit further from the body.")]
     [Range(0.5f, 2.5f)]
     public float hairColliderRadiusMultiplier = 1.05f;
+    [Tooltip("Include the head as an avoidance sphere. OFF lets you anchor the hair inside the head — strands emerge from inside the skull rather than being pushed to the surface.")]
+    public bool hairAvoidsHead = false;
 
     [Header("Anchors (populated at runtime)")]
     public Transform root;
@@ -160,6 +162,7 @@ public class MermaidBootstrap : MonoBehaviour
     int _lastHairSeed = int.MinValue;
     float _lastHairLengthVariance = float.NaN;
     Vector3 _lastHairBaseDirection = new Vector3(float.NaN, 0f, 0f);
+    bool _lastHairAvoidsHead;
 
     void Awake()
     {
@@ -282,7 +285,12 @@ public class MermaidBootstrap : MonoBehaviour
             }
         }
 
-        // 6b. Refresh hair-body collider radii (live: tail curve + buffer multiplier).
+        // 6b. Hair-body collider list: rebuild when the head toggle flips, then refresh radii.
+        if (hairAvoidsHead != _lastHairAvoidsHead)
+        {
+            _lastHairAvoidsHead = hairAvoidsHead;
+            RebuildHairColliders();
+        }
         UpdateHairColliderRadii();
 
         // 7. Live update hair tubes.
@@ -493,7 +501,9 @@ public class MermaidBootstrap : MonoBehaviour
         var baseRadii = new List<float>();
 
         // Upper-body sphere approximations (radii roughly match the visible meshes).
-        if (driver != null)               { transforms.Add(driver);    baseRadii.Add(0.32f); } // head
+        // Head is opt-in — left out by default so the hair can be anchored inside the
+        // head (strands appear to grow out from inside the skull).
+        if (hairAvoidsHead && driver != null) { transforms.Add(driver); baseRadii.Add(0.32f); }
         if (root != null) {
             var neck = root.Find("Neck");
             if (neck != null)             { transforms.Add(neck);      baseRadii.Add(0.18f); }
@@ -738,6 +748,12 @@ public class MermaidBootstrap : MonoBehaviour
         tube.radii = new float[tubePoints.Length];
         tube.sides = sides;
         tube.aspectRatio = aspectRatio;
+        // Round tubes (tail / hair): parallel transport — no twist between rings, no pinches.
+        // Flat tubes (fluke / wings): world-up alignment — keeps the flat axis horizontal so
+        // it doesn't twist around its own axis as the lobe waves.
+        tube.frameMode = Mathf.Approximately(aspectRatio, 1f)
+            ? TubeRenderer.FrameMode.ParallelTransport
+            : TubeRenderer.FrameMode.WorldUpAligned;
         tube.capEnds = true;
         return tube;
     }

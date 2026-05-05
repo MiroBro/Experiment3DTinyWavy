@@ -14,6 +14,9 @@ public class TubeRenderer : MonoBehaviour
     [Tooltip("Cross-section aspect ratio. 1 = round; <1 = flat (wide horizontal, thin vertical) for a fluke; >1 = tall narrow.")]
     [Range(0.05f, 4f)]
     public float aspectRatio = 1f;
+    public enum FrameMode { ParallelTransport, WorldUpAligned }
+    [Tooltip("ParallelTransport: smooth, no pinching — best for ROUND tubes that wave through any orientation. WorldUpAligned: keeps the cross-section's wide axis horizontal — best for FLAT flukes/wings so they don't twist around their own axis.")]
+    public FrameMode frameMode = FrameMode.ParallelTransport;
     [Tooltip("Add flat round caps so the tube isn't open at the ends.")]
     public bool capEnds = true;
 
@@ -63,40 +66,88 @@ public class TubeRenderer : MonoBehaviour
         }
 
         // 2) Tangents at each control point: midpoint direction for interior, edge direction at ends.
+        //    Defensive against degenerate (zero) tangents — fall back to the previous good one.
+        Vector3 lastGoodTangent = Vector3.forward;
         for (int i = 0; i < N; i++)
         {
+            Vector3 t;
             if (i == 0)
             {
-                tangents[i] = (localPts[1] - localPts[0]).normalized;
+                Vector3 d = localPts[1] - localPts[0];
+                t = (d.sqrMagnitude > 0.000001f) ? d.normalized : lastGoodTangent;
             }
             else if (i == N - 1)
             {
-                tangents[i] = (localPts[i] - localPts[i - 1]).normalized;
+                Vector3 d = localPts[i] - localPts[i - 1];
+                t = (d.sqrMagnitude > 0.000001f) ? d.normalized : lastGoodTangent;
             }
             else
             {
-                Vector3 a = (localPts[i] - localPts[i - 1]).normalized;
-                Vector3 b = (localPts[i + 1] - localPts[i]).normalized;
+                Vector3 a = localPts[i] - localPts[i - 1];
+                Vector3 b = localPts[i + 1] - localPts[i];
                 Vector3 sum = a + b;
-                tangents[i] = (sum.sqrMagnitude > 0.0001f) ? sum.normalized : a;
+                if (sum.sqrMagnitude > 0.000001f) t = sum.normalized;
+                else if (a.sqrMagnitude > 0.000001f) t = a.normalized;
+                else if (b.sqrMagnitude > 0.000001f) t = b.normalized;
+                else t = lastGoodTangent;
             }
+            tangents[i] = t;
+            lastGoodTangent = t;
         }
 
-        // 3) Vertex rings. Use a stable "up" reference and project perpendicular to the
-        //    tangent at each control point. Adequate for a tail that's mostly horizontal.
-        Vector3 refUp = Vector3.up;
+        // 3) Vertex rings.
+        //   ParallelTransport: carry the frame from ring to ring, rotated by
+        //     FromToRotation(prevTangent, currentTangent). Smooth, no pinching, but
+        //     for elliptical cross-sections (aspectRatio != 1) the ellipse rotates
+        //     around the tangent as the tube waves — looks like "pulsing" on a fluke.
+        //   WorldUpAligned: each ring's right axis is computed independently from
+        //     world up. Keeps an ellipse's wide axis horizontal in world space.
+        Vector3 prevTangent = tangents[0];
+        Vector3 r, u;
+        if (frameMode == FrameMode.ParallelTransport)
+        {
+            Vector3 refUp = (Mathf.Abs(Vector3.Dot(prevTangent, Vector3.up)) > 0.99f)
+                ? Vector3.right : Vector3.up;
+            r = Vector3.Cross(refUp, prevTangent);
+        }
+        else
+        {
+            r = Vector3.Cross(Vector3.up, prevTangent);
+            if (r.sqrMagnitude < 0.0001f) r = Vector3.Cross(Vector3.right, prevTangent);
+        }
+        if (r.sqrMagnitude < 0.0001f) r = Vector3.right;
+        r = r.normalized;
+        u = Vector3.Cross(prevTangent, r).normalized;
+
         int v = 0;
         for (int i = 0; i < N; i++)
         {
             Vector3 t = tangents[i];
-            Vector3 r = Vector3.Cross(refUp, t);
+
+            if (frameMode == FrameMode.ParallelTransport)
+            {
+                if (i > 0)
+                {
+                    Quaternion delta = Quaternion.FromToRotation(prevTangent, t);
+                    r = delta * r;
+                    u = delta * u;
+                }
+            }
+            else // WorldUpAligned: recompute r from world up at each ring.
+            {
+                r = Vector3.Cross(Vector3.up, t);
+                if (r.sqrMagnitude < 0.0001f) r = Vector3.Cross(Vector3.right, t);
+            }
+
+            // Re-orthogonalize against the current tangent (kills numerical drift /
+            // fixes the rare case where r ended up nearly parallel to t).
+            r -= Vector3.Dot(r, t) * t;
             if (r.sqrMagnitude < 0.0001f)
             {
-                r = Vector3.Cross(Vector3.right, t);
-                if (r.sqrMagnitude < 0.0001f) r = Vector3.up;
+                r = (Mathf.Abs(t.y) > 0.99f) ? Vector3.Cross(Vector3.right, t) : Vector3.Cross(Vector3.up, t);
             }
-            r.Normalize();
-            Vector3 u = Vector3.Cross(t, r).normalized;
+            r = r.normalized;
+            u = Vector3.Cross(t, r).normalized;
 
             float radius = (radii != null && i < radii.Length)
                 ? radii[i]
@@ -108,6 +159,7 @@ public class TubeRenderer : MonoBehaviour
                 Vector3 dir = Mathf.Cos(angle) * r + Mathf.Sin(angle) * u * aspectRatio;
                 vertsBuf[v++] = localPts[i] + dir * radius;
             }
+            prevTangent = t;
         }
 
         int startCapIdx = -1, endCapIdx = -1;
