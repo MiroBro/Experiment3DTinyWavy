@@ -50,6 +50,9 @@ public class MermaidBootstrap : MonoBehaviour
     public int tailTubeSides = 16;
     public float tailBaseSmoothTime = 0.18f;
     public float tailTipSmoothTime = 0.55f;
+    [Tooltip("Extra multiplier on the TAIL bones' smoothTimes only. <1 = stiffer (wave settles faster, less floppy). >1 = floppier. Independent of globalSmoothMultiplier.")]
+    [Range(0.05f, 3f)]
+    public float tailFlowMultiplier = 1f;
 
     [Header("Fluke (live-editable; rebuilds on bones/span/sweep change)")]
     [Range(2, 6)]
@@ -69,6 +72,9 @@ public class MermaidBootstrap : MonoBehaviour
     public int flukeTubeSides = 12;
     public float flukeBaseSmoothTime = 0.10f;
     public float flukeTipSmoothTime = 0.30f;
+    [Tooltip("Extra multiplier on the FLUKE bones' smoothTimes only. <1 = stiffer fluke (rigid). >1 = floppier, fabric-like. Try 2–3 for a flowy cloth feel.")]
+    [Range(0.05f, 5f)]
+    public float flukeFlowMultiplier = 1f;
 
     [Header("Anchors (populated at runtime)")]
     public Transform root;
@@ -86,6 +92,8 @@ public class MermaidBootstrap : MonoBehaviour
     // Tail/fluke runtime state — tracked separately so we can rebuild on the fly.
     readonly List<GameObject> tailGameObjects = new List<GameObject>();
     readonly List<MermaidBone> tailFlukeBones = new List<MermaidBone>();
+    readonly HashSet<MermaidBone> tailBoneSet = new HashSet<MermaidBone>();
+    readonly HashSet<MermaidBone> flukeBoneSet = new HashSet<MermaidBone>();
     TubeRenderer tailTube;
     float[] tailTubeRadii;
     readonly TubeRenderer[] flukeTubes = new TubeRenderer[2];
@@ -124,12 +132,19 @@ public class MermaidBootstrap : MonoBehaviour
 
     void Update()
     {
-        // 1. Live smoothTime updates (everywhere — spine/arms/tail/fluke).
-        float m = Mathf.Max(0f, globalSmoothMultiplier);
+        // 1. Live smoothTime updates. Tail and fluke bones get an extra multiplier
+        //    so the user can tune those independently from the global slider.
+        float gm = Mathf.Max(0f, globalSmoothMultiplier);
+        float tm = Mathf.Max(0.01f, tailFlowMultiplier);
+        float fm = Mathf.Max(0.01f, flukeFlowMultiplier);
         for (int i = 0; i < boneEntries.Count; i++)
         {
             var e = boneEntries[i];
-            if (e.bone != null) e.bone.smoothTime = e.baseSmoothTime * m;
+            if (e.bone == null) continue;
+            float mult = gm;
+            if (tailBoneSet.Contains(e.bone)) mult *= tm;
+            else if (flukeBoneSet.Contains(e.bone)) mult *= fm;
+            e.bone.smoothTime = e.baseSmoothTime * mult;
         }
 
         // 2. Live swimmer params.
@@ -293,7 +308,9 @@ public class MermaidBootstrap : MonoBehaviour
             var seg = MakeBoneAtRest($"Tail{i:D2}", root, worldRestPos, prev, localOffsetFromPrev, smoothTime, chain);
 
             tubePoints[i + 1] = seg;
-            tailFlukeBones.Add(seg.GetComponent<MermaidBone>());
+            var mb = seg.GetComponent<MermaidBone>();
+            tailFlukeBones.Add(mb);
+            tailBoneSet.Add(mb);
             tailGameObjects.Add(seg.gameObject);
 
             prev = seg;
@@ -330,7 +347,9 @@ public class MermaidBootstrap : MonoBehaviour
                 var seg = MakeBoneAtRest($"Fluke{suffix}{i:D2}", root, boneRestPos, prev, localOffsetFromPrev, smoothTime, chain);
 
                 tubePoints[i + 1] = seg;
-                tailFlukeBones.Add(seg.GetComponent<MermaidBone>());
+                var mb = seg.GetComponent<MermaidBone>();
+                tailFlukeBones.Add(mb);
+                flukeBoneSet.Add(mb);
                 tailGameObjects.Add(seg.gameObject);
 
                 prev = seg;
@@ -359,6 +378,8 @@ public class MermaidBootstrap : MonoBehaviour
             }
         }
         tailFlukeBones.Clear();
+        tailBoneSet.Clear();
+        flukeBoneSet.Clear();
 
         // Destroy old GameObjects (tail bones, tail tube, fluke bones, fluke tubes).
         for (int i = 0; i < tailGameObjects.Count; i++)
