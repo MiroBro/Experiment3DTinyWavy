@@ -32,6 +32,9 @@ public class MermaidBootstrap : MonoBehaviour
     public float shoulderSmoothTime = 0f;
     public float elbowSmoothTime = 0.40f;
     public float handSmoothTime = 0.70f;
+    [Tooltip("Extra multiplier on ELBOW and HAND smoothTimes only. Use this to add visible flow/delay to the arms without unstickying the shoulders. >1 = floppier arms; 1.5–2.5 makes the upper arm clearly lag the spine.")]
+    [Range(0.05f, 5f)]
+    public float armFlowMultiplier = 1f;
 
     [Header("Joint Constraints (live-editable)")]
     [Range(0f, 180f)]
@@ -138,6 +141,7 @@ public class MermaidBootstrap : MonoBehaviour
     readonly List<MermaidBone> tailFlukeBones = new List<MermaidBone>();
     readonly HashSet<MermaidBone> tailBoneSet = new HashSet<MermaidBone>();
     readonly HashSet<MermaidBone> flukeBoneSet = new HashSet<MermaidBone>();
+    readonly HashSet<MermaidBone> armBoneSet = new HashSet<MermaidBone>();
     TubeRenderer tailTube;
     float[] tailTubeRadii;
     readonly TubeRenderer[] flukeTubes = new TubeRenderer[2];
@@ -226,6 +230,7 @@ public class MermaidBootstrap : MonoBehaviour
         float tm = Mathf.Max(0.01f, tailFlowMultiplier);
         float fm = Mathf.Max(0.01f, flukeFlowMultiplier);
         float hm = Mathf.Max(0.01f, hairFlowMultiplier);
+        float am = Mathf.Max(0.01f, armFlowMultiplier);
         for (int i = 0; i < boneEntries.Count; i++)
         {
             var e = boneEntries[i];
@@ -234,6 +239,7 @@ public class MermaidBootstrap : MonoBehaviour
             if (tailBoneSet.Contains(e.bone)) mult *= tm;
             else if (flukeBoneSet.Contains(e.bone)) mult *= fm;
             else if (hairBoneSet.Contains(e.bone)) mult *= hm;
+            else if (armBoneSet.Contains(e.bone)) mult *= am;
             e.bone.smoothTime = e.baseSmoothTime * mult;
         }
 
@@ -391,6 +397,10 @@ public class MermaidBootstrap : MonoBehaviour
             handMB.maxBendAngleDeg = handMaxBendAngleDeg;
             if (side < 0) { elbowL = elbowMB; handL = handMB; }
             else          { elbowR = elbowMB; handR = handMB; }
+            // Tag elbow + hand so armFlowMultiplier scales them. Shoulder is left out
+            // intentionally — it's rigidly attached to the spine ("in its socket").
+            armBoneSet.Add(elbowMB);
+            armBoneSet.Add(handMB);
 
             MakePrim(PrimitiveType.Sphere, "ShoulderViz" + suffix, shoulder,
                 Vector3.zero, new Vector3(0.18f, 0.18f, 0.18f), Quaternion.identity, jointColor);

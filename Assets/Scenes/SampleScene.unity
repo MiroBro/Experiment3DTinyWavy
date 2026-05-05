@@ -591,23 +591,32 @@ MonoBehaviour:
   flukeFlowMultiplier: 1.52
   hairStrandCount: 7
   hairBonesPerStrand: 34
-  hairStrandLength: 3
+  hairStrandLength: 2.55
   hairLengthVariance: 0.221
   hairRootOffset: {x: 0, y: 0.47, z: 0.26}
-  hairScalpRadius: 0.3
+  hairScalpRadius: 0
   hairBaseDirection: {x: 0, y: 0.22, z: -1}
   hairRadiusCurve:
     serializedVersion: 2
     m_Curve:
     - serializedVersion: 3
-      time: -0.002838357
-      value: -0.0003772676
+      time: -0.004135354
+      value: -0.0040698946
       inSlope: 1.1450415
       outSlope: 1.1450415
       tangentMode: 0
       weightedMode: 0
       inWeight: 0
       outWeight: 0.02963944
+    - serializedVersion: 3
+      time: 0.43749183
+      value: 0.33811805
+      inSlope: -0.08068538
+      outSlope: -0.08068538
+      tangentMode: 0
+      weightedMode: 0
+      inWeight: 0.33333334
+      outWeight: 0.33333334
     - serializedVersion: 3
       time: 1
       value: 0.008
@@ -624,10 +633,10 @@ MonoBehaviour:
     serializedVersion: 2
     m_Curve:
     - serializedVersion: 3
-      time: -0.030029297
-      value: 0.8590393
-      inSlope: -0.858219
-      outSlope: -0.858219
+      time: -0.028747559
+      value: 0.3378334
+      inSlope: -0.3335014
+      outSlope: -0.3335014
       tangentMode: 34
       weightedMode: 0
       inWeight: 0
@@ -635,8 +644,8 @@ MonoBehaviour:
     - serializedVersion: 3
       time: 0.9624634
       value: 0.0072631836
-      inSlope: -0.858219
-      outSlope: -0.858219
+      inSlope: -0.3335014
+      outSlope: -0.3335014
       tangentMode: 34
       weightedMode: 0
       inWeight: 0.33333334
@@ -647,8 +656,8 @@ MonoBehaviour:
   hairTubeSides: 12
   hairBaseSmoothTime: 0.1
   hairTipSmoothTime: 0.5
-  hairFlowMultiplier: 0.38
-  hairSpreadAngle: 39.4
+  hairFlowMultiplier: 0.36
+  hairSpreadAngle: 13.1
   hairSeed: 168
   hairColliderRadiusMultiplier: 1.05
   hairAvoidsHead: 0
