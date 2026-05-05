@@ -469,8 +469,8 @@ MonoBehaviour:
   tailColor: {r: 0.45, g: 0.28, b: 0.1, a: 1}
   flukeColor: {r: 0.3, g: 0.18, b: 0.07, a: 1}
   spawnPosition: {x: 0, y: 0, z: 0}
-  porpoiseAmplitude: 0.35
-  porpoiseFrequency: 0.9
+  porpoiseAmplitude: 0.29
+  porpoiseFrequency: 0.83
   cruiseSpeed: 3
   globalSmoothMultiplier: 0.37
   neckSmoothTime: 0.15
@@ -528,6 +528,7 @@ MonoBehaviour:
   tailTubeSides: 16
   tailBaseSmoothTime: 0.18
   tailTipSmoothTime: 0.55
+  tailFlowMultiplier: 0.3
   flukeBonesPerLobe: 3
   flukeSpan: 0.85
   flukeSweepZ: -0.3
@@ -559,6 +560,7 @@ MonoBehaviour:
   flukeTubeSides: 14
   flukeBaseSmoothTime: 0.1
   flukeTipSmoothTime: 0.3
+  flukeFlowMultiplier: 1.06
   root: {fileID: 0}
   driver: {fileID: 0}
   headPoint: {fileID: 0}
