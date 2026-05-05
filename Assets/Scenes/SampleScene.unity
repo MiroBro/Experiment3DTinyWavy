@@ -505,8 +505,17 @@ MonoBehaviour:
       inWeight: 0.12685813
       outWeight: 0.049879495
     - serializedVersion: 3
-      time: 0.90885186
-      value: 0.04963854
+      time: 0.7192307
+      value: 0.105642706
+      inSlope: -0.54103917
+      outSlope: -0.54103917
+      tangentMode: 0
+      weightedMode: 0
+      inWeight: 0.33333334
+      outWeight: 0.33333334
+    - serializedVersion: 3
+      time: 0.8939593
+      value: 0.0594652
       inSlope: -0.22909768
       outSlope: -0.22909768
       tangentMode: 0
@@ -514,8 +523,8 @@ MonoBehaviour:
       inWeight: 0.33333334
       outWeight: 0.33333334
     - serializedVersion: 3
-      time: 0.99967384
-      value: 0.003195405
+      time: 0.99833107
+      value: 0.02532065
       inSlope: -0.830725
       outSlope: -0.830725
       tangentMode: 0
@@ -529,38 +538,56 @@ MonoBehaviour:
   tailBaseSmoothTime: 0.18
   tailTipSmoothTime: 0.55
   tailFlowMultiplier: 0.3
-  flukeBonesPerLobe: 3
-  flukeSpan: 0.85
-  flukeSweepZ: -0.3
+  flukeBonesPerLobe: 12
+  flukeSpan: 1.2
+  flukeSweepZ: -0.87
   flukeRadiusCurve:
     serializedVersion: 2
     m_Curve:
     - serializedVersion: 3
-      time: 0
-      value: 0.18
-      inSlope: 0
-      outSlope: 0
+      time: 0.0006461139
+      value: 0.050142996
+      inSlope: 1.2908708
+      outSlope: 1.2908708
       tangentMode: 0
       weightedMode: 0
       inWeight: 0
+      outWeight: 0.03372117
+    - serializedVersion: 3
+      time: 0.63205904
+      value: 0.17951825
+      inSlope: -0.24588586
+      outSlope: -0.24588586
+      tangentMode: 0
+      weightedMode: 0
+      inWeight: 0.045213364
+      outWeight: 0.0677575
+    - serializedVersion: 3
+      time: 0.9391098
+      value: 0.03343282
+      inSlope: -0.13855442
+      outSlope: -0.13855442
+      tangentMode: 0
+      weightedMode: 0
+      inWeight: 0.06695049
       outWeight: 0
     - serializedVersion: 3
-      time: 1
-      value: 0.04
-      inSlope: 0
-      outSlope: 0
+      time: 0.9981159
+      value: 0.0040764166
+      inSlope: -1.0010026
+      outSlope: -1.0010026
       tangentMode: 0
       weightedMode: 0
-      inWeight: 0
+      inWeight: 0.33147418
       outWeight: 0
     m_PreInfinity: 2
     m_PostInfinity: 2
     m_RotationOrder: 4
-  flukeAspectRatio: 0.243
-  flukeTubeSides: 14
+  flukeAspectRatio: 0.21
+  flukeTubeSides: 9
   flukeBaseSmoothTime: 0.1
   flukeTipSmoothTime: 0.3
-  flukeFlowMultiplier: 1.06
+  flukeFlowMultiplier: 1.56
   root: {fileID: 0}
   driver: {fileID: 0}
   headPoint: {fileID: 0}
