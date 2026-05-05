@@ -55,15 +55,16 @@ public class MermaidBootstrap : MonoBehaviour
     public float tailFlowMultiplier = 1f;
 
     [Header("Fluke (live-editable; rebuilds on bones/span/sweep change)")]
-    [Range(2, 6)]
-    public int flukeBonesPerLobe = 3;
+    [Range(2, 12)]
+    public int flukeBonesPerLobe = 4;
     [Tooltip("How far each fluke lobe extends sideways from the tail tip.")]
     public float flukeSpan = 0.55f;
     [Tooltip("How far back (along -Z) each fluke lobe sweeps from the tail tip.")]
     public float flukeSweepZ = -0.30f;
-    [Tooltip("Fluke radius along the lobe length. Same idea as tailRadiusCurve.")]
+    [Tooltip("Fluke radius along the lobe length. X = 0 at tail tip, 1 at fluke tip. Default is leaf-shaped: small at base (so it merges with the tail's narrow tip), wide in the middle, narrow at the end.")]
     public AnimationCurve flukeRadiusCurve = new AnimationCurve(
-        new Keyframe(0f, 0.18f),
+        new Keyframe(0f, 0.04f),
+        new Keyframe(0.35f, 0.22f),
         new Keyframe(1f, 0.04f));
     [Tooltip("0.05 = very flat horizontal fluke; 1 = round.")]
     [Range(0.05f, 1f)]
@@ -254,9 +255,9 @@ public class MermaidBootstrap : MonoBehaviour
             var shoulder = MakeBone("Shoulder" + suffix, root,
                 new Vector3(sx * 0.30f,  0f,     0.40f), neckBone,  shoulderSmoothTime, chain);
             var elbow    = MakeBone("Elbow"    + suffix, root,
-                new Vector3(sx * 0.42f, -0.05f, -0.05f), shoulder,  elbowSmoothTime,    chain);
+                new Vector3(sx * 0.46f, -0.08f, -0.18f), shoulder,  elbowSmoothTime,    chain);
             var hand     = MakeBone("Hand"     + suffix, root,
-                new Vector3(sx * 0.32f, -0.25f, -0.40f), elbow,     handSmoothTime,     chain);
+                new Vector3(sx * 0.34f, -0.32f, -0.62f), elbow,     handSmoothTime,     chain);
 
             var elbowMB = elbow.GetComponent<MermaidBone>();
             var handMB = hand.GetComponent<MermaidBone>();
@@ -476,6 +477,18 @@ public class MermaidBootstrap : MonoBehaviour
         var follow = cam.GetComponent<CameraFollow>();
         if (follow == null) follow = cam.gameObject.AddComponent<CameraFollow>();
         follow.target = driver;
+    }
+
+    [ContextMenu("Reset Tail and Fluke Curves to Defaults")]
+    void ResetCurvesToDefaults()
+    {
+        tailRadiusCurve = new AnimationCurve(
+            new Keyframe(0f, 0.42f),
+            new Keyframe(1f, 0.10f));
+        flukeRadiusCurve = new AnimationCurve(
+            new Keyframe(0f, 0.04f),
+            new Keyframe(0.35f, 0.22f),
+            new Keyframe(1f, 0.04f));
     }
 
     [ContextMenu("Apply Mermaid Art Colors")]
