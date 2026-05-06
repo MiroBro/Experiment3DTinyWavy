@@ -36,6 +36,9 @@ public class MermaidSwimmer : MonoBehaviour
     public int twirlTurns = 1;
     [Tooltip("Easing of the roll. X = 0..1 (start..end of twirl), Y = 0..1 (rotation fraction). Ease-in-out feels like a deliberate pirouette; linear feels constant-speed.")]
     public AnimationCurve twirlCurve = AnimationCurve.EaseInOut(0f, 0f, 1f, 1f);
+    [Tooltip("Radius of the circular sweep her body traces during a twirl, in the plane perpendicular to her forward axis. 0 = pure spin in place. ~0.2–0.5 looks like a dancerly mermaid arc.")]
+    [Range(0f, 1.5f)]
+    public float twirlRadius = 0.25f;
 
     [Header("Debug")]
     public bool drawGizmos = true;
@@ -97,13 +100,14 @@ public class MermaidSwimmer : MonoBehaviour
         float vy = Mathf.Cos(porpoisePhase) * porpoiseAmplitude * omega;
         float vz = cruiseSpeed;
 
-        transform.position = stationaryBasePos + Vector3.up * yOffset;
-
         float pitchDeg = -Mathf.Atan2(vy, vz) * Mathf.Rad2Deg;
         baseRotation = stationaryBaseRot * Quaternion.Euler(pitchDeg, 0f, 0f);
 
-        float rollDeg = ComputeTwirlRollDegrees(dt);
-        transform.rotation = baseRotation * Quaternion.Euler(0f, 0f, rollDeg);
+        var twirl = TickTwirl(dt);
+        Vector3 twirlOffsetWorld = baseRotation * twirl.offsetLocal;
+
+        transform.position = stationaryBasePos + Vector3.up * yOffset + twirlOffsetWorld;
+        transform.rotation = baseRotation * Quaternion.Euler(0f, 0f, twirl.rollDeg);
 
         SwimVelocity = stationaryBaseRot * new Vector3(0f, vy, vz);
     }
@@ -136,15 +140,20 @@ public class MermaidSwimmer : MonoBehaviour
             baseRotation = Quaternion.Slerp(baseRotation, targetRot, turnLerp);
         }
 
-        float rollDeg = ComputeTwirlRollDegrees(dt);
-        transform.rotation = baseRotation * Quaternion.Euler(0f, 0f, rollDeg);
+        var twirl = TickTwirl(dt);
+        Vector3 twirlOffsetWorld = baseRotation * twirl.offsetLocal;
+        transform.position += twirlOffsetWorld;
+        transform.rotation = baseRotation * Quaternion.Euler(0f, 0f, twirl.rollDeg);
 
         SwimVelocity = totalVel;
     }
 
-    float ComputeTwirlRollDegrees(float dt)
+    struct TwirlState { public float rollDeg; public Vector3 offsetLocal; }
+
+    TwirlState TickTwirl(float dt)
     {
-        if (!enableTwirl) return 0f;
+        TwirlState output = default;
+        if (!enableTwirl) return output;
 
         if (twirlActive)
         {
@@ -152,14 +161,30 @@ public class MermaidSwimmer : MonoBehaviour
             float t = twirlElapsed / Mathf.Max(0.001f, twirlDuration);
             if (t >= 1f)
             {
-                // Twirl complete — body returns to its original pose (0 == 360°).
+                // Twirl complete — body returns to its original pose & position
+                // (0 deg == 360 deg, and (1-cos(2π))=0, sin(2π)=0).
                 twirlActive = false;
                 twirlElapsed = 0f;
                 twirlIdleTimer = 0f;
-                return 0f;
+                return output;
             }
+
             float curveT = twirlCurve.Evaluate(t);
-            return curveT * 360f * Mathf.Max(1, twirlTurns);
+            int turns = Mathf.Max(1, twirlTurns);
+            output.rollDeg = curveT * 360f * turns;
+
+            if (twirlRadius > 0.001f)
+            {
+                // Body traces a circle of radius r in the plane perpendicular to
+                // its forward axis. The (1-cos, sin) parametrization starts and ends
+                // exactly at (0,0) so there's no positional snap into / out of the twirl.
+                float angleRad = curveT * 2f * Mathf.PI * turns;
+                output.offsetLocal = new Vector3(
+                    (1f - Mathf.Cos(angleRad)) * twirlRadius,
+                    Mathf.Sin(angleRad) * twirlRadius,
+                    0f);
+            }
+            return output;
         }
 
         twirlIdleTimer += dt;
@@ -168,7 +193,7 @@ public class MermaidSwimmer : MonoBehaviour
             twirlActive = true;
             twirlElapsed = 0f;
         }
-        return 0f;
+        return output;
     }
 
     void PickNewTarget()
