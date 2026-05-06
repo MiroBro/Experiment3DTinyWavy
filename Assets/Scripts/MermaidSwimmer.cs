@@ -24,6 +24,19 @@ public class MermaidSwimmer : MonoBehaviour
     public float porpoiseAmplitude = 0.35f;
     public float porpoiseFrequency = 0.9f;
 
+    [Header("Twirl / Pirouette")]
+    [Tooltip("If true, the body periodically rolls a full turn around its forward axis (a mermaid pirouette).")]
+    public bool enableTwirl = true;
+    [Tooltip("Seconds between twirls (idle gap between pirouettes).")]
+    public float twirlInterval = 5f;
+    [Tooltip("Seconds the twirl takes to complete from start back to original pose.")]
+    public float twirlDuration = 1.5f;
+    [Tooltip("How many full turns per twirl. 1 = single pirouette, 2 = double, etc.")]
+    [Range(1, 5)]
+    public int twirlTurns = 1;
+    [Tooltip("Easing of the roll. X = 0..1 (start..end of twirl), Y = 0..1 (rotation fraction). Ease-in-out feels like a deliberate pirouette; linear feels constant-speed.")]
+    public AnimationCurve twirlCurve = AnimationCurve.EaseInOut(0f, 0f, 1f, 1f);
+
     [Header("Debug")]
     public bool drawGizmos = true;
 
@@ -39,6 +52,13 @@ public class MermaidSwimmer : MonoBehaviour
     Vector3 stationaryBasePos;
     Quaternion stationaryBaseRot;
 
+    // Twirl state. Roll is composed on top of the body's "natural" rotation each frame
+    // so the chain's lag/wave reads as a flowing pirouette.
+    Quaternion baseRotation = Quaternion.identity;
+    float twirlIdleTimer;
+    float twirlElapsed;
+    bool twirlActive;
+
     void Start()
     {
         if (stationary)
@@ -47,6 +67,7 @@ public class MermaidSwimmer : MonoBehaviour
             Vector3 fwd = stationaryFacing.sqrMagnitude < 0.0001f ? Vector3.forward : stationaryFacing.normalized;
             stationaryBaseRot = Quaternion.LookRotation(fwd, Vector3.up);
             transform.rotation = stationaryBaseRot;
+            baseRotation = stationaryBaseRot;
         }
         else
         {
@@ -54,6 +75,7 @@ public class MermaidSwimmer : MonoBehaviour
             Vector3 toTarget = targetPos - transform.position;
             if (toTarget.sqrMagnitude > 0.0001f)
                 transform.rotation = Quaternion.LookRotation(toTarget.normalized, Vector3.up);
+            baseRotation = transform.rotation;
         }
     }
 
@@ -78,7 +100,10 @@ public class MermaidSwimmer : MonoBehaviour
         transform.position = stationaryBasePos + Vector3.up * yOffset;
 
         float pitchDeg = -Mathf.Atan2(vy, vz) * Mathf.Rad2Deg;
-        transform.rotation = stationaryBaseRot * Quaternion.Euler(pitchDeg, 0f, 0f);
+        baseRotation = stationaryBaseRot * Quaternion.Euler(pitchDeg, 0f, 0f);
+
+        float rollDeg = ComputeTwirlRollDegrees(dt);
+        transform.rotation = baseRotation * Quaternion.Euler(0f, 0f, rollDeg);
 
         SwimVelocity = stationaryBaseRot * new Vector3(0f, vy, vz);
     }
@@ -108,10 +133,42 @@ public class MermaidSwimmer : MonoBehaviour
         {
             Quaternion targetRot = Quaternion.LookRotation(totalVel.normalized, Vector3.up);
             float turnLerp = 1f - Mathf.Exp(-turnSharpness * dt);
-            transform.rotation = Quaternion.Slerp(transform.rotation, targetRot, turnLerp);
+            baseRotation = Quaternion.Slerp(baseRotation, targetRot, turnLerp);
         }
 
+        float rollDeg = ComputeTwirlRollDegrees(dt);
+        transform.rotation = baseRotation * Quaternion.Euler(0f, 0f, rollDeg);
+
         SwimVelocity = totalVel;
+    }
+
+    float ComputeTwirlRollDegrees(float dt)
+    {
+        if (!enableTwirl) return 0f;
+
+        if (twirlActive)
+        {
+            twirlElapsed += dt;
+            float t = twirlElapsed / Mathf.Max(0.001f, twirlDuration);
+            if (t >= 1f)
+            {
+                // Twirl complete — body returns to its original pose (0 == 360°).
+                twirlActive = false;
+                twirlElapsed = 0f;
+                twirlIdleTimer = 0f;
+                return 0f;
+            }
+            float curveT = twirlCurve.Evaluate(t);
+            return curveT * 360f * Mathf.Max(1, twirlTurns);
+        }
+
+        twirlIdleTimer += dt;
+        if (twirlIdleTimer >= twirlInterval)
+        {
+            twirlActive = true;
+            twirlElapsed = 0f;
+        }
+        return 0f;
     }
 
     void PickNewTarget()
