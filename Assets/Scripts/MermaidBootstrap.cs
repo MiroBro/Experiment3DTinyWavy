@@ -211,7 +211,19 @@ public class MermaidBootstrap : MonoBehaviour
     {
         BuildMermaid();
         WireCamera();
+        EnsureSparkles();
         SnapshotShapeValues();
+    }
+
+    void EnsureSparkles()
+    {
+        if (FindObjectOfType<SparkleSpawner>() != null) return;
+        var go = new GameObject("Sparkles");
+        var spawner = go.AddComponent<SparkleSpawner>();
+        spawner.handTransform = (handR != null) ? handR.transform : null;
+        spawner.swimmer = swimmer;
+        var ui = go.AddComponent<SparkleUI>();
+        ui.spawner = spawner;
     }
 
     void SnapshotShapeValues()
