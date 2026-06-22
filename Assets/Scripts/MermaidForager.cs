@@ -37,10 +37,10 @@ public class MermaidForager : MonoBehaviour
     public float elbowReachFraction = 0.6f;
     [Tooltip("Degrees she tips her head down to look at her hands while rummaging.")]
     public float lookDownDeg = 34f;
-    [Tooltip("How far her whole body leans DOWN toward the seabed as she digs in (helps her hands reach the floor).")]
-    public float bodyDip = 0.22f;
-    [Tooltip("How high above her base she cruises when NOT rummaging — keeps her swimming up over the grass (about one body thickness). She descends from here to dig.")]
-    public float cruiseLift = 0.6f;
+    [Tooltip("Extra downward lean at the dig (on top of dropping from cruiseLift). Small, because her arms are long enough to reach the roots once she's descended — too much buries her hands under the floor.")]
+    public float bodyDip = 0.1f;
+    [Tooltip("How high above her base she cruises when NOT rummaging — keeps her swimming well up over the grass. She dives down from here to dig at the roots.")]
+    public float cruiseLift = 1.2f;
     [Tooltip("How far her whole body leans FORWARD over the dig spot.")]
     public float bodyLean = 0.15f;
     [Tooltip("How much swim motion she keeps while rummaging. 0 = dead stop/flat; ~0.55 keeps a clear body undulation (arc + bob) going while she digs so she doesn't look stiff.")]

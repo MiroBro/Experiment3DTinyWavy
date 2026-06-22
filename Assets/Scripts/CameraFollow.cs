@@ -29,8 +29,8 @@ public class CameraFollow : MonoBehaviour
     [Header("Input")]
     [Tooltip("Degrees of orbit per pixel of mouse delta while right mouse is held.")]
     public float orbitSensitivity = 0.25f;
-    [Tooltip("Distance change per scroll tick.")]
-    public float zoomSensitivity = 1f;
+    [Tooltip("Distance change per scroll notch.")]
+    public float zoomSensitivity = 1.5f;
     public Key resetKey = Key.R;
 
     float yaw;
@@ -112,7 +112,9 @@ public class CameraFollow : MonoBehaviour
             Vector2 scroll = mouse.scroll.ReadValue();
             if (Mathf.Abs(scroll.y) > 0.01f)
             {
-                distance -= scroll.y * 0.01f * zoomSensitivity;
+                // Scroll magnitude varies wildly by OS/mouse (1 vs 120 per notch), so zoom by
+                // its SIGN times a fixed step — reliable everywhere. Scroll up = zoom in.
+                distance -= Mathf.Sign(scroll.y) * zoomSensitivity;
                 distance = Mathf.Clamp(distance, minDistance, maxDistance);
             }
         }

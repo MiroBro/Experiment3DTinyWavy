@@ -110,10 +110,11 @@ public class MermaidBone : MonoBehaviour
         if (!initialized) Initialize();
         if (anchor == null) return;
 
-        Vector3 idealPos = anchor.TransformPoint(localOffset);
-        // Reach: shift the target before any constraint runs so the cone re-centres on the
-        // reach pose and enforceRestDistance measures against it (a gentle reach, no snap).
-        idealPos += reachOffsetWorld;
+        Vector3 naturalIdeal = anchor.TransformPoint(localOffset);
+        // Reach shifts the AIM target (so the bone rotates toward the reach pose), but the
+        // rest LENGTH enforced below stays the natural bone length — the limb reorients to
+        // reach WITHOUT stretching. If it can't reach, she leans/bends down further instead.
+        Vector3 idealPos = naturalIdeal + reachOffsetWorld;
 
         Vector3 newPos;
         if (smoothTime <= Mathf.Epsilon)
@@ -182,7 +183,7 @@ public class MermaidBone : MonoBehaviour
         if (enforceRestDistance)
         {
             Vector3 dirFromAnchor = newPos - anchor.position;
-            float restLen = (idealPos - anchor.position).magnitude;
+            float restLen = (naturalIdeal - anchor.position).magnitude; // natural length — no stretch
             float currentLen = dirFromAnchor.magnitude;
             if (currentLen > 0.0001f && restLen > 0.0001f)
             {

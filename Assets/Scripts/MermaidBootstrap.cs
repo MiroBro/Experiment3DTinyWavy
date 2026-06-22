@@ -14,6 +14,10 @@ public class MermaidBootstrap : MonoBehaviour
     public Color flukeColor = new Color(0.30f, 0.18f, 0.07f);
     public Color hairColor  = new Color(0.55f, 0.18f, 0.08f);
 
+    [Header("Tail Look")]
+    [Tooltip("Render the tail + fluke with the gorgeous golden-scale shader (Mermaid/GoldScales) instead of a flat colour.")]
+    public bool goldenTail = true;
+
     [Header("Spawn")]
     public Vector3 spawnPosition = Vector3.zero;
 
@@ -222,10 +226,12 @@ public class MermaidBootstrap : MonoBehaviour
     void Awake()
     {
         BuildMermaid();
+        EnsureSmoothBody();
         WireCamera();
         EnsureSparkles();
         EnsureForagingAndSeaweed();
         EnsureAtmosphere();
+        EnsureJewelry();
         SnapshotShapeValues();
     }
 
@@ -305,6 +311,161 @@ public class MermaidBootstrap : MonoBehaviour
             forager.elbowR = elbowR;
             forager.inventory = inventory;
         }
+    }
+
+    [Header("Smooth Body")]
+    [Tooltip("Replace the blocky cylinder/sphere torso + arms with smooth lofted meshes (like the lathe-bottles), still deforming with the bones.")]
+    public bool smoothBody = true;
+    Material _skinMat;
+
+    void EnsureSmoothBody()
+    {
+        if (!smoothBody || root == null) return;
+        _skinMat = SkinMaterial(skinColor);
+
+        var neck = FindDeep(root, "Neck");
+        var torso = FindDeep(root, "Torso");
+        var hip = FindDeep(root, "Hip");
+        if (driver != null && neck != null && torso != null && hip != null)
+        {
+            // Feminine profile: thin neck → shoulders → bust → pinched waist → hips.
+            var torsoCurve = new AnimationCurve(
+                new Keyframe(0.00f, 0.12f), new Keyframe(0.18f, 0.26f), new Keyframe(0.32f, 0.30f),
+                new Keyframe(0.52f, 0.24f), new Keyframe(0.66f, 0.20f), new Keyframe(0.82f, 0.30f),
+                new Keyframe(1.00f, 0.30f));
+            MakeBodyTube("TorsoMesh", new[] { driver, neck, torso, hip }, torsoCurve, 0.82f, 16);
+        }
+
+        for (int side = -1; side <= 1; side += 2)
+        {
+            string sfx = side < 0 ? "L" : "R";
+            var sh = FindDeep(root, "Shoulder" + sfx);
+            var el = FindDeep(root, "Elbow" + sfx);
+            var ha = FindDeep(root, "Hand" + sfx);
+            if (sh != null && el != null && ha != null)
+            {
+                var armCurve = new AnimationCurve(
+                    new Keyframe(0f, 0.10f), new Keyframe(0.5f, 0.07f), new Keyframe(1f, 0.05f));
+                MakeBodyTube("ArmMesh" + sfx, new[] { sh, el, ha }, armCurve, 1f, 12);
+            }
+        }
+
+        BuildHands();
+
+        // Hide the old blocky bits the tubes/hands replace (kept disabled, not destroyed).
+        foreach (var n in new[] {
+            "NeckVisual","HipVisual","UpperSpineLink","LowerSpineLink",
+            "ShoulderVizL","ShoulderVizR","ElbowVizL","ElbowVizR",
+            "UpperArmLinkL","UpperArmLinkR","LowerArmLinkL","LowerArmLinkR",
+            "HandVizL","HandVizR" })
+        {
+            var t = FindDeep(root, n);
+            if (t != null) t.gameObject.SetActive(false);
+        }
+    }
+
+    void BuildHands()
+    {
+        for (int side = -1; side <= 1; side += 2)
+        {
+            string sfx = side < 0 ? "L" : "R";
+            var hand = FindDeep(root, "Hand" + sfx);
+            var elbow = FindDeep(root, "Elbow" + sfx);
+            if (hand == null || elbow == null) continue;
+
+            // Hand root: +Z points along the forearm (away from the elbow), follows the wrist bone.
+            var go = new GameObject("HandMesh" + sfx);
+            go.transform.position = hand.position;
+            Vector3 dir = (hand.position - elbow.position);
+            go.transform.rotation = (dir.sqrMagnitude > 1e-5f)
+                ? Quaternion.LookRotation(dir.normalized, Vector3.up)
+                : Quaternion.identity;
+            go.transform.SetParent(hand, true);
+            var hr = go.transform;
+
+            // Palm: a flat, slightly tapered ellipsoid.
+            var palm = GameObject.CreatePrimitive(PrimitiveType.Sphere);
+            palm.name = "Palm";
+            var pc = palm.GetComponent<Collider>(); if (pc != null) Destroy(pc);
+            palm.transform.SetParent(hr, false);
+            palm.transform.localPosition = new Vector3(0f, 0f, 0.075f);
+            palm.transform.localScale = new Vector3(0.15f, 0.055f, 0.19f);
+            palm.GetComponent<MeshRenderer>().sharedMaterial = _skinMat;
+
+            // Four fingers across the front edge, gently splayed.
+            float[] fx = { -0.068f, -0.023f, 0.023f, 0.068f };
+            float[] fsplay = { -20f, -7f, 7f, 20f };
+            float[] flen = { 0.075f, 0.092f, 0.088f, 0.070f };
+            for (int i = 0; i < 4; i++)
+                Finger(hr, fx[i], 0.155f, flen[i], 0.017f, fsplay[i], 12f);
+
+            // Thumb: off to the inner side, angled out.
+            Finger(hr, side * 0.075f, 0.05f, 0.068f, 0.020f, side * 55f, 18f);
+        }
+    }
+
+    void Finger(Transform parent, float x, float zBase, float length, float radius, float splayDeg, float curlDeg)
+    {
+        var f = GameObject.CreatePrimitive(PrimitiveType.Capsule);
+        f.name = "Finger";
+        var c = f.GetComponent<Collider>(); if (c != null) Destroy(c);
+        f.transform.SetParent(parent, false);
+        f.GetComponent<MeshRenderer>().sharedMaterial = _skinMat;
+        // Capsule axis is local +Y; tilt it to point ~+Z (the finger direction), then splay.
+        Quaternion q = Quaternion.AngleAxis(splayDeg, Vector3.up) * Quaternion.AngleAxis(-90f + curlDeg, Vector3.right);
+        f.transform.localRotation = q;
+        Vector3 axis = q * Vector3.up;
+        f.transform.localPosition = new Vector3(x, 0f, zBase) + axis * (length * 0.5f);
+        f.transform.localScale = new Vector3(radius * 2f, length * 0.5f, radius * 2f);
+    }
+
+    void MakeBodyTube(string name, Transform[] tubeBones, AnimationCurve curve, float aspect, int sides)
+    {
+        var go = new GameObject(name);
+        go.transform.SetParent(root, false);
+        var bt = go.AddComponent<MermaidBodyTube>();
+        bt.bones = tubeBones; bt.radius = curve; bt.aspect = aspect; bt.sides = sides; bt.samples = 28;
+        go.GetComponent<MeshRenderer>().sharedMaterial = _skinMat;
+    }
+
+    Material SkinMaterial(Color c)
+    {
+        var temp = GameObject.CreatePrimitive(PrimitiveType.Cube);
+        var m = new Material(temp.GetComponent<Renderer>().sharedMaterial);
+        Destroy(temp);
+        if (m.HasProperty("_BaseColor")) m.SetColor("_BaseColor", c);
+        if (m.HasProperty("_Color")) m.color = c;
+        if (m.HasProperty("_Smoothness")) m.SetFloat("_Smoothness", 0.28f);
+        return m;
+    }
+
+    static Transform FindDeep(Transform t, string name)
+    {
+        if (t.name == name) return t;
+        for (int i = 0; i < t.childCount; i++)
+        {
+            var r = FindDeep(t.GetChild(i), name);
+            if (r != null) return r;
+        }
+        return null;
+    }
+
+    [Header("Gilded Look")]
+    [Tooltip("Drape her in glowing emissive-gold jewelry (crown, gem, necklace, arm bands).")]
+    public bool goldJewelry = true;
+
+    void EnsureJewelry()
+    {
+        if (!goldJewelry) return;
+        var neck = (root != null) ? root.Find("Neck") : null;
+        var jewelry = new GameObject("MermaidJewelry").AddComponent<MermaidJewelry>();
+        jewelry.transform.SetParent(root, false);
+        jewelry.Build(
+            driver, neck,
+            elbowL != null ? elbowL.transform : null,
+            elbowR != null ? elbowR.transform : null,
+            handL  != null ? handL.transform  : null,
+            handR  != null ? handR.transform  : null);
     }
 
     void EnsureAtmosphere()
@@ -844,6 +1005,7 @@ public class MermaidBootstrap : MonoBehaviour
         tailTube = MakeTube("TailTube", root, tubePoints, tailColor, tailTubeSides, 1f);
         tailTubeRadii = tailTube.radii;
         tailGameObjects.Add(tailTube.gameObject);
+        ApplyGoldScales(tailTube);
     }
 
     void BuildFluke(Transform root, Transform tailTip, MermaidBoneChain chain)
@@ -885,6 +1047,7 @@ public class MermaidBootstrap : MonoBehaviour
             flukeTubes[s] = tube;
             flukeTubeRadii[s] = tube.radii;
             tailGameObjects.Add(tube.gameObject);
+            ApplyGoldScales(tube);
         }
     }
 
@@ -971,6 +1134,21 @@ public class MermaidBootstrap : MonoBehaviour
         link.b = b;
         link.radius = radius;
         Tint(go, tint);
+    }
+
+    Material _goldScaleMat;
+
+    void ApplyGoldScales(TubeRenderer tube)
+    {
+        if (!goldenTail || tube == null) return;
+        if (_goldScaleMat == null)
+        {
+            var sh = Shader.Find("Mermaid/GoldScales");
+            if (sh == null) return;
+            _goldScaleMat = new Material(sh);
+        }
+        var mr = tube.GetComponent<MeshRenderer>();
+        if (mr != null) mr.sharedMaterial = _goldScaleMat;
     }
 
     TubeRenderer MakeTube(string name, Transform parent, Transform[] tubePoints, Color tint, int sides, float aspectRatio)

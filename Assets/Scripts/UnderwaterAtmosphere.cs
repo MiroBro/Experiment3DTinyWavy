@@ -17,17 +17,26 @@ using UnityEngine.Rendering.Universal;
 public class UnderwaterAtmosphere : MonoBehaviour
 {
     [Header("Water Mood")]
-    public Color waterTint = new Color(0.10f, 0.42f, 0.48f);
-    public Color deepColor = new Color(0.02f, 0.10f, 0.20f);
-    public Color horizonColor = new Color(0.06f, 0.30f, 0.40f);
-    [Tooltip("Exponential-squared fog density. Higher = murkier / shorter view distance.")]
-    public float fogDensity = 0.035f;
+    public Color waterTint = new Color(0.22f, 0.58f, 0.62f);
+    public Color deepColor = new Color(0.10f, 0.34f, 0.50f);
+    public Color horizonColor = new Color(0.34f, 0.66f, 0.74f);
+    [Tooltip("Exponential-squared fog density. Higher = murkier / shorter view distance. Low = bright, clear, sunny water.")]
+    public float fogDensity = 0.014f;
+
+    [Header("Lighting")]
+    [Tooltip("Key (sun) light intensity — boosted for a bright, sunlit-shallows feel.")]
+    public float sunIntensity = 1.7f;
+    public Color sunColor = new Color(1f, 0.97f, 0.86f);
+    [Tooltip("Overall ambient brightness multiplier.")]
+    public float ambientIntensity = 1.6f;
 
     [Header("Post FX")]
     public float bloomIntensity = 0.9f;
-    public float bloomThreshold = 0.85f;
-    [Range(-100f, 100f)] public float saturation = 6f;
-    [Range(0f, 1f)] public float vignette = 0.28f;
+    public float bloomThreshold = 0.9f;
+    [Tooltip("Exposure lift — higher = brighter overall image.")]
+    public float exposure = 0.35f;
+    [Range(-100f, 100f)] public float saturation = 8f;
+    [Range(0f, 1f)] public float vignette = 0.15f;
     [Tooltip("FXAA is the cheapest antialiasing; good for low-end. Turn off for absolute minimum cost.")]
     public bool fxaa = true;
 
@@ -51,12 +60,31 @@ public class UnderwaterAtmosphere : MonoBehaviour
     void Start()
     {
         SetupFogAndAmbient();
+        SetupKeyLight();
         SetupSkybox();
         SetupPostProcessing();
         SetupCamera();
         SetupSeabed();
         SetupGodRays();
         SetupMotes();
+    }
+
+    void SetupKeyLight()
+    {
+        // Brighten the existing directional "sun" for a sunlit-shallows look.
+        Light sun = null;
+        foreach (var l in FindObjectsByType<Light>(FindObjectsSortMode.None))
+            if (l.type == LightType.Directional) { sun = l; break; }
+        if (sun == null)
+        {
+            var go = new GameObject("Sun");
+            go.transform.SetParent(transform, false);
+            go.transform.rotation = Quaternion.Euler(55f, -25f, 0f); // from above-ish
+            sun = go.AddComponent<Light>();
+            sun.type = LightType.Directional;
+        }
+        sun.color = sunColor;
+        sun.intensity = sunIntensity;
     }
 
     void SetupFogAndAmbient()
@@ -67,9 +95,10 @@ public class UnderwaterAtmosphere : MonoBehaviour
         RenderSettings.fogDensity = Mathf.Max(0f, fogDensity);
 
         RenderSettings.ambientMode = AmbientMode.Trilight;
-        RenderSettings.ambientSkyColor = horizonColor * 1.1f;
-        RenderSettings.ambientEquatorColor = waterTint * 0.8f;
+        RenderSettings.ambientSkyColor = horizonColor * 1.3f;
+        RenderSettings.ambientEquatorColor = waterTint * 1.1f;
         RenderSettings.ambientGroundColor = deepColor;
+        RenderSettings.ambientIntensity = ambientIntensity;
     }
 
     void SetupSkybox()
@@ -105,7 +134,7 @@ public class UnderwaterAtmosphere : MonoBehaviour
         bloom.tint.Override(Color.Lerp(Color.white, waterTint, 0.25f));
 
         var color = profile.Add<ColorAdjustments>(true);
-        color.postExposure.Override(0.05f);
+        color.postExposure.Override(exposure);
         color.saturation.Override(saturation);
         color.colorFilter.Override(Color.Lerp(Color.white, waterTint, 0.18f));
 
