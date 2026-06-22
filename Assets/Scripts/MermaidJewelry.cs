@@ -9,9 +9,9 @@ using UnityEngine;
 /// </summary>
 public class MermaidJewelry : MonoBehaviour
 {
-    public Color goldColor = new Color(1.0f, 0.78f, 0.30f);
-    [Tooltip("Emissive strength — higher = stronger bloom glow.")]
-    public float emission = 3.2f;
+    public Color goldColor = new Color(1.0f, 0.72f, 0.22f);
+    [Tooltip("Emissive strength — keep low so it reads as polished gold, not a glowing lamp.")]
+    public float emission = 0.5f;
     public Color gemColor = new Color(1.0f, 0.45f, 0.55f);
 
     Material _gold, _gem;
@@ -22,13 +22,13 @@ public class MermaidJewelry : MonoBehaviour
                       Transform handL, Transform handR)
     {
         _gold = EmissiveMat(goldColor, emission);
-        _gem = EmissiveMat(gemColor, emission * 1.4f);
+        _gem = EmissiveMat(gemColor, emission * 3f);
 
         if (head != null)
         {
             // Crown: a tilted ring sitting on the brow, plus a small forehead gem.
-            var crown = MakeRing("Crown", head, 0.34f, 0.045f, _gold);
-            crown.localPosition = new Vector3(0f, 0.28f, 0.12f);
+            var crown = MakeRing("Crown", head, 0.30f, 0.028f, _gold);
+            crown.localPosition = new Vector3(0f, 0.26f, 0.12f);
             crown.localRotation = Quaternion.Euler(18f, 0f, 0f);
 
             var gem = GameObject.CreatePrimitive(PrimitiveType.Sphere);
@@ -36,28 +36,28 @@ public class MermaidJewelry : MonoBehaviour
             Strip(gem);
             gem.transform.SetParent(head, false);
             gem.transform.localPosition = new Vector3(0f, 0.16f, 0.40f);
-            gem.transform.localScale = new Vector3(0.10f, 0.13f, 0.06f);
+            gem.transform.localScale = new Vector3(0.07f, 0.09f, 0.045f);
             gem.GetComponent<MeshRenderer>().sharedMaterial = _gem;
         }
 
         if (neck != null)
         {
-            var necklace = MakeRing("Necklace", neck, 0.22f, 0.03f, _gold);
+            var necklace = MakeRing("Necklace", neck, 0.17f, 0.022f, _gold);
             necklace.localPosition = new Vector3(0f, -0.05f, 0f);
             necklace.localRotation = Quaternion.Euler(80f, 0f, 0f);
         }
 
-        // Arm bands: a band at each elbow + wrist, oriented across the limb.
-        AddBand("BandElbowL", elbowL, handL, 0.16f);
-        AddBand("BandElbowR", elbowR, handR, 0.16f);
-        AddBand("CuffL", handL, elbowL, 0.14f);
-        AddBand("CuffR", handR, elbowR, 0.14f);
+        // Arm bands: a slim band at each elbow + wrist, sized close to the limb.
+        AddBand("BandElbowL", elbowL, handL, 0.085f);
+        AddBand("BandElbowR", elbowR, handR, 0.085f);
+        AddBand("CuffL", handL, elbowL, 0.07f);
+        AddBand("CuffR", handR, elbowR, 0.07f);
     }
 
     void AddBand(string name, Transform at, Transform toward, float major)
     {
         if (at == null) return;
-        var ring = MakeRing(name, at, major, 0.028f, _gold);
+        var ring = MakeRing(name, at, major, 0.016f, _gold);
         // Orient the ring's axis (local +Z) along the limb so it wraps like a bracelet.
         if (toward != null)
         {

@@ -225,8 +225,11 @@ public class MermaidBootstrap : MonoBehaviour
 
     void Awake()
     {
+        ApplyReferenceLook();
         BuildMermaid();
         EnsureSmoothBody();
+        EnsureHairVolume();
+        EnsureFace();
         WireCamera();
         EnsureSparkles();
         EnsureForagingAndSeaweed();
@@ -322,6 +325,7 @@ public class MermaidBootstrap : MonoBehaviour
     {
         if (!smoothBody || root == null) return;
         _skinMat = SkinMaterial(skinColor);
+        var bodyMat = BodyMaterial();   // skin + glowing gold markings
 
         var neck = FindDeep(root, "Neck");
         var torso = FindDeep(root, "Torso");
@@ -333,7 +337,7 @@ public class MermaidBootstrap : MonoBehaviour
                 new Keyframe(0.00f, 0.12f), new Keyframe(0.18f, 0.26f), new Keyframe(0.32f, 0.30f),
                 new Keyframe(0.52f, 0.24f), new Keyframe(0.66f, 0.20f), new Keyframe(0.82f, 0.30f),
                 new Keyframe(1.00f, 0.30f));
-            MakeBodyTube("TorsoMesh", new[] { driver, neck, torso, hip }, torsoCurve, 0.82f, 16);
+            MakeBodyTube("TorsoMesh", new[] { driver, neck, torso, hip }, torsoCurve, 0.82f, 16, bodyMat);
         }
 
         for (int side = -1; side <= 1; side += 2)
@@ -346,7 +350,7 @@ public class MermaidBootstrap : MonoBehaviour
             {
                 var armCurve = new AnimationCurve(
                     new Keyframe(0f, 0.10f), new Keyframe(0.5f, 0.07f), new Keyframe(1f, 0.05f));
-                MakeBodyTube("ArmMesh" + sfx, new[] { sh, el, ha }, armCurve, 1f, 12);
+                MakeBodyTube("ArmMesh" + sfx, new[] { sh, el, ha }, armCurve, 1f, 12, bodyMat);
             }
         }
 
@@ -362,6 +366,81 @@ public class MermaidBootstrap : MonoBehaviour
             var t = FindDeep(root, n);
             if (t != null) t.gameObject.SetActive(false);
         }
+    }
+
+    [Header("Reference Look")]
+    [Tooltip("Apply the reference palette + fuller flowing hair at startup (overrides the colour/hair fields below). Turn off to tune those by hand.")]
+    public bool referenceLook = true;
+
+    void ApplyReferenceLook()
+    {
+        if (!referenceLook) return;
+        // Deep bronze skin so the gold pops, vivid crimson hair, and a fuller/longer mane.
+        skinColor = new Color(0.46f, 0.25f, 0.14f);
+        torsoColor = new Color(0.46f, 0.25f, 0.14f);
+        hipColor = new Color(0.42f, 0.22f, 0.12f);
+        handColor = new Color(0.50f, 0.28f, 0.16f);
+        hairColor = new Color(0.80f, 0.14f, 0.09f);
+        hairStrandCount = Mathf.Max(hairStrandCount, 26);
+        hairStrandLength = Mathf.Max(hairStrandLength, 2.3f);
+        hairBonesPerStrand = Mathf.Max(hairBonesPerStrand, 9);
+    }
+
+    [Header("Face")]
+    [Tooltip("Reshape the eyes into tilted almonds and add subtle brows for a simple elegant face.")]
+    public bool elegantFace = true;
+
+    void EnsureFace()
+    {
+        if (!elegantFace || root == null) return;
+        var browMat = SkinMaterial(new Color(0.12f, 0.05f, 0.04f));
+        var eyeCol = new Color(0.05f, 0.025f, 0.02f);
+        for (int side = -1; side <= 1; side += 2)
+        {
+            string sfx = side < 0 ? "L" : "R";
+            var eye = FindDeep(root, "Eye" + sfx);
+            if (eye == null) continue;
+
+            // Tilted almond: wide, thin, with the outer corner lifted.
+            eye.localScale = new Vector3(0.36f, 0.11f, 0.13f);
+            eye.localRotation = Quaternion.Euler(0f, 0f, side * 10f);
+            var er = eye.GetComponent<Renderer>();
+            if (er != null)
+            {
+                var m = new Material(er.sharedMaterial);
+                if (m.HasProperty("_BaseColor")) m.SetColor("_BaseColor", eyeCol);
+                if (m.HasProperty("_Color")) m.color = eyeCol;
+                er.sharedMaterial = m;
+            }
+
+            // Brow just above the eye, angled.
+            var brow = GameObject.CreatePrimitive(PrimitiveType.Cube);
+            brow.name = "Brow" + sfx;
+            var bc = brow.GetComponent<Collider>(); if (bc != null) Destroy(bc);
+            brow.transform.SetParent(eye.parent, false);
+            brow.transform.localPosition = new Vector3(side * 0.25f, 0.20f, 0.40f);
+            brow.transform.localScale = new Vector3(0.17f, 0.035f, 0.05f);
+            brow.transform.localRotation = Quaternion.Euler(0f, 0f, side * 12f);
+            brow.GetComponent<MeshRenderer>().sharedMaterial = browMat;
+        }
+    }
+
+    [Header("Hair Volume")]
+    [Tooltip("Soft bean-shaped hair mass at the back of the head that the long strands flow out of.")]
+    public bool hairVolume = true;
+
+    void EnsureHairVolume()
+    {
+        if (!hairVolume || driver == null) return;
+        var blob = GameObject.CreatePrimitive(PrimitiveType.Sphere);
+        blob.name = "HairVolume";
+        var c = blob.GetComponent<Collider>(); if (c != null) Destroy(c);
+        blob.transform.SetParent(driver, false);
+        // Back-and-up of the head, behind the face so it never covers her features.
+        blob.transform.localPosition = new Vector3(0f, 0.10f, -0.22f);
+        blob.transform.localScale = new Vector3(0.66f, 0.58f, 0.82f);
+        blob.GetComponent<MeshRenderer>().sharedMaterial = SkinMaterial(hairColor);
+        blob.AddComponent<GentleBillow>();
     }
 
     void BuildHands()
@@ -383,24 +462,24 @@ public class MermaidBootstrap : MonoBehaviour
             go.transform.SetParent(hand, true);
             var hr = go.transform;
 
-            // Palm: a flat, slightly tapered ellipsoid.
+            // Palm: a flat, slightly elongated ellipsoid (longer than wide reads as a palm).
             var palm = GameObject.CreatePrimitive(PrimitiveType.Sphere);
             palm.name = "Palm";
             var pc = palm.GetComponent<Collider>(); if (pc != null) Destroy(pc);
             palm.transform.SetParent(hr, false);
-            palm.transform.localPosition = new Vector3(0f, 0f, 0.075f);
-            palm.transform.localScale = new Vector3(0.15f, 0.055f, 0.19f);
+            palm.transform.localPosition = new Vector3(0f, 0f, 0.10f);
+            palm.transform.localScale = new Vector3(0.19f, 0.06f, 0.26f);
             palm.GetComponent<MeshRenderer>().sharedMaterial = _skinMat;
 
-            // Four fingers across the front edge, gently splayed.
-            float[] fx = { -0.068f, -0.023f, 0.023f, 0.068f };
-            float[] fsplay = { -20f, -7f, 7f, 20f };
-            float[] flen = { 0.075f, 0.092f, 0.088f, 0.070f };
+            // Four long fingers across the front edge, gently splayed + curled.
+            float[] fx = { -0.085f, -0.030f, 0.030f, 0.085f };
+            float[] fsplay = { -22f, -7f, 7f, 22f };
+            float[] flen = { 0.125f, 0.155f, 0.150f, 0.120f };
             for (int i = 0; i < 4; i++)
-                Finger(hr, fx[i], 0.155f, flen[i], 0.017f, fsplay[i], 12f);
+                Finger(hr, fx[i], 0.22f, flen[i], 0.022f, fsplay[i], 14f);
 
             // Thumb: off to the inner side, angled out.
-            Finger(hr, side * 0.075f, 0.05f, 0.068f, 0.020f, side * 55f, 18f);
+            Finger(hr, side * 0.095f, 0.07f, 0.105f, 0.026f, side * 58f, 20f);
         }
     }
 
@@ -419,13 +498,23 @@ public class MermaidBootstrap : MonoBehaviour
         f.transform.localScale = new Vector3(radius * 2f, length * 0.5f, radius * 2f);
     }
 
-    void MakeBodyTube(string name, Transform[] tubeBones, AnimationCurve curve, float aspect, int sides)
+    void MakeBodyTube(string name, Transform[] tubeBones, AnimationCurve curve, float aspect, int sides, Material mat)
     {
         var go = new GameObject(name);
         go.transform.SetParent(root, false);
         var bt = go.AddComponent<MermaidBodyTube>();
         bt.bones = tubeBones; bt.radius = curve; bt.aspect = aspect; bt.sides = sides; bt.samples = 28;
-        go.GetComponent<MeshRenderer>().sharedMaterial = _skinMat;
+        go.GetComponent<MeshRenderer>().sharedMaterial = mat;
+    }
+
+    Material BodyMaterial()
+    {
+        var sh = Shader.Find("Mermaid/SkinGold");
+        if (sh == null) return SkinMaterial(skinColor);
+        var m = new Material(sh);
+        if (m.HasProperty("_SkinColor")) m.SetColor("_SkinColor", skinColor);
+        if (m.HasProperty("_GoldColor")) m.SetColor("_GoldColor", new Color(1f, 0.75f, 0.28f));
+        return m;
     }
 
     Material SkinMaterial(Color c)
