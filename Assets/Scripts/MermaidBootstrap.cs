@@ -154,6 +154,8 @@ public class MermaidBootstrap : MonoBehaviour
     public bool spawnSeaweed = true;
     [Tooltip("Make her periodically pause and rummage in the grass for gems/rocks.")]
     public bool enableForaging = true;
+    [Tooltip("Spawn the gorgeous underwater atmosphere (post FX, fog, gradient sky, god rays, caustic seabed, drifting motes).")]
+    public bool spawnAtmosphere = true;
     // NOTE: seaweed + foraging tuning lives on the SeaweedField and MermaidForager components
     // (created at runtime, so select them in the Hierarchy while playing to tweak). It is
     // intentionally NOT mirrored here — Bootstrap fields already saved in the scene freeze at
@@ -223,6 +225,7 @@ public class MermaidBootstrap : MonoBehaviour
         WireCamera();
         EnsureSparkles();
         EnsureForagingAndSeaweed();
+        EnsureAtmosphere();
         SnapshotShapeValues();
     }
 
@@ -302,6 +305,13 @@ public class MermaidBootstrap : MonoBehaviour
             forager.elbowR = elbowR;
             forager.inventory = inventory;
         }
+    }
+
+    void EnsureAtmosphere()
+    {
+        if (!spawnAtmosphere) return;
+        if (FindAnyObjectByType<UnderwaterAtmosphere>() != null) return;
+        new GameObject("UnderwaterAtmosphere").AddComponent<UnderwaterAtmosphere>();
     }
 
     void SnapshotShapeValues()

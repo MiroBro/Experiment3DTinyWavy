@@ -39,6 +39,8 @@ public class MermaidForager : MonoBehaviour
     public float lookDownDeg = 34f;
     [Tooltip("How far her whole body leans DOWN toward the seabed as she digs in (helps her hands reach the floor).")]
     public float bodyDip = 0.22f;
+    [Tooltip("How high above her base she cruises when NOT rummaging — keeps her swimming up over the grass (about one body thickness). She descends from here to dig.")]
+    public float cruiseLift = 0.6f;
     [Tooltip("How far her whole body leans FORWARD over the dig spot.")]
     public float bodyLean = 0.15f;
     [Tooltip("How much swim motion she keeps while rummaging. 0 = dead stop/flat; ~0.55 keeps a clear body undulation (arc + bob) going while she digs so she doesn't look stiff.")]
@@ -131,10 +133,15 @@ public class MermaidForager : MonoBehaviour
         float eased = Mathf.SmoothStep(0f, 1f, reachEnv);
         Vector3 dip = (Vector3.down * reachDown + fwd * reachForward) * eased;
 
-        // Lean her whole body in (down + forward) over the dig spot — combined with the head
-        // pitch, her upper body follows her hands down so the rummage reads as deliberate.
+        // Body height: cruise lifted up over the grass, then descend + lean in over the dig
+        // spot. Lerp between the two poses so she sinks to the seabed to rummage and rises to
+        // swim. The rummage pose is unchanged from before, so her reach to the roots still lands.
         if (swimmer != null)
-            swimmer.forageBodyOffsetWorld = (Vector3.down * bodyDip + fwd * bodyLean) * eased;
+        {
+            Vector3 cruisePose = Vector3.up * cruiseLift;
+            Vector3 rummagePose = Vector3.down * bodyDip + fwd * bodyLean;
+            swimmer.forageBodyOffsetWorld = Vector3.Lerp(cruisePose, rummagePose, eased);
+        }
 
         // Rummage motion: a stirring circle in the seabed plane + a digging in/out bob along
         // the reach + a slow erratic drift, so it looks like she's sifting through the grass
