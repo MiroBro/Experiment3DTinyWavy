@@ -57,9 +57,12 @@ public class SeaweedField : MonoBehaviour
     [Header("Treadmill Scroll")]
     [Tooltip("How fast the grass scrolls past her (to fake swimming forward) relative to her swim speed. 0 = static bed.")]
     public float scrollScale = 0.5f;
+    [Tooltip("Seconds for the scroll to ease in / out as she starts and stops swimming. Higher = more gradual accel/decel.")]
+    public float scrollEaseTime = 1.0f;
     // Assigned by the bootstrap — drives scroll speed (and stops it while she rummages).
     [System.NonSerialized] public MermaidSwimmer swimmer;
     Vector2 scroll;
+    float scrollEase = 1f, scrollEaseVel;
 
     Material mat;
     Mesh mesh;
@@ -215,14 +218,21 @@ public class SeaweedField : MonoBehaviour
         // it, and ease the speed to ~0 while she rummages. The shader wraps blades within the
         // patch, so it's seamless and stays one draw call. Scroll is kept wrapped to the patch
         // size for float precision.
+        // Treadmill scroll: target speed is full while cruising, 0 while rummaging. The actual
+        // speed is SmoothDamped toward that target so the bed slows and speeds up GRADUALLY
+        // rather than snapping. The sway is independent (handled in the shader), so the blades
+        // keep waving underwater even when the bed isn't scrolling.
         if (swimmer != null && Application.isPlaying)
         {
-            // Threshold sits above her rummage motionScale (~0.55) so the scroll comes to a
-            // COMPLETE stop while she digs, and ramps back up to full as she resumes swimming.
-            float factor = Mathf.SmoothStep(0.6f, 0.97f, swimmer.motionScale);
+            // Remap motionScale to 0..1 across [0.6, 0.97] (NOT Mathf.SmoothStep, which lerps
+            // between those values rather than remapping). Rummage motionScale (~0.55) → 0.
+            float t = Mathf.Clamp01((swimmer.motionScale - 0.6f) / 0.37f);
+            float target = t * t * (3f - 2f * t);
+            scrollEase = Mathf.SmoothDamp(scrollEase, target, ref scrollEaseVel, Mathf.Max(0.01f, scrollEaseTime));
+
             Vector3 f = swimmer.transform.forward; f.y = 0f;
             if (f.sqrMagnitude > 1e-4f) f.Normalize();
-            float speed = swimmer.cruiseSpeed * scrollScale * factor;
+            float speed = swimmer.cruiseSpeed * scrollScale * scrollEase;
             scroll.x -= f.x * speed * Time.deltaTime;
             scroll.y -= f.z * speed * Time.deltaTime;
             scroll.x = Mathf.Repeat(scroll.x, Mathf.Max(0.01f, patchSize.x));

@@ -87,6 +87,8 @@ Shader "Seaweed/Flow"
                 float wave    = sin(_Time.y * _SwayFreq * twoPi + phase - h * _WaveCount * twoPi);
                 float lateral = (_SwayAmp * amp) * bend * (0.55 + 0.45 * wave);
                 float side    = _FlutterAmp * bend * sin(_Time.y * _SwayFreq * 4.0 + phase * 1.3);
+                // Blades always wave (underwater current) — independent of whether the bed is
+                // scrolling. Only the treadmill scroll (handled on the CPU) starts/stops.
                 wpos += sway * lateral + flut * side;
 
                 // Push out of the body spheres so she parts the grass as she hovers / rummages.
