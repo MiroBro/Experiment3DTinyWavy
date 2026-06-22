@@ -104,8 +104,8 @@ public class CameraFollow : MonoBehaviour
             if (mouse.rightButton.isPressed)
             {
                 Vector2 delta = mouse.delta.ReadValue();
-                yaw += delta.x * orbitSensitivity;
-                pitch += delta.y * orbitSensitivity;
+                yaw -= delta.x * orbitSensitivity;
+                pitch -= delta.y * orbitSensitivity;
                 pitch = Mathf.Clamp(pitch, minPitch, maxPitch);
             }
 

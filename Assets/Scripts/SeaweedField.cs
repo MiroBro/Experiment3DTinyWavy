@@ -54,11 +54,21 @@ public class SeaweedField : MonoBehaviour
     [System.NonSerialized] public Transform[] bodyColliders;
     [System.NonSerialized] public float[] bodyRadii;
 
+    [Header("Treadmill Scroll")]
+    [Tooltip("How fast the grass scrolls past her (to fake swimming forward) relative to her swim speed. 0 = static bed.")]
+    public float scrollScale = 0.5f;
+    // Assigned by the bootstrap — drives scroll speed (and stops it while she rummages).
+    [System.NonSerialized] public MermaidSwimmer swimmer;
+    Vector2 scroll;
+
     Material mat;
     Mesh mesh;
     readonly Vector4[] sphereBuf = new Vector4[16];
     static readonly int IdSpheres = Shader.PropertyToID("_BodySpheres");
     static readonly int IdCount   = Shader.PropertyToID("_BodyCount");
+    static readonly int IdScroll = Shader.PropertyToID("_Scroll");
+    static readonly int IdPatchCenter = Shader.PropertyToID("_PatchCenter");
+    static readonly int IdPatchHalf = Shader.PropertyToID("_PatchHalf");
 
     void Start()
     {
@@ -119,6 +129,7 @@ public class SeaweedField : MonoBehaviour
         var verts  = new List<Vector3>(count * vpb);
         var uv0    = new List<Vector2>(count * vpb);
         var uv1    = new List<Vector4>(count * vpb);
+        var uv2    = new List<Vector2>(count * vpb);   // per-vertex blade-root XZ (for treadmill wrap)
         var cols   = new List<Color>(count * vpb);
         var tris   = new List<int>(count * N * 6);
 
@@ -149,8 +160,9 @@ public class SeaweedField : MonoBehaviour
                 Vector3 center = root + Vector3.up * (height * h);
                 float halfW = Mathf.Lerp(baseHalfWidth, tipHalfWidth, h);
 
-                verts.Add(center - wide * halfW); uv0.Add(new Vector2(0f, h)); uv1.Add(sway); cols.Add(shade);
-                verts.Add(center + wide * halfW); uv0.Add(new Vector2(1f, h)); uv1.Add(sway); cols.Add(shade);
+                Vector2 rootXZ = new Vector2(root.x, root.z);
+                verts.Add(center - wide * halfW); uv0.Add(new Vector2(0f, h)); uv1.Add(sway); uv2.Add(rootXZ); cols.Add(shade);
+                verts.Add(center + wide * halfW); uv0.Add(new Vector2(1f, h)); uv1.Add(sway); uv2.Add(rootXZ); cols.Add(shade);
             }
 
             for (int i = 0; i < N; i++)
@@ -176,6 +188,7 @@ public class SeaweedField : MonoBehaviour
         mesh.SetVertices(verts);
         mesh.SetUVs(0, uv0);
         mesh.SetUVs(1, uv1);
+        mesh.SetUVs(2, uv2);
         mesh.SetColors(cols);
         mesh.SetTriangles(tris, 0);
         mesh.RecalculateNormals();
@@ -197,6 +210,27 @@ public class SeaweedField : MonoBehaviour
         PushMaterialParams();
 
         if (mat == null) return;
+
+        // Treadmill: scroll the bed opposite her forward motion so she appears to swim across
+        // it, and ease the speed to ~0 while she rummages. The shader wraps blades within the
+        // patch, so it's seamless and stays one draw call. Scroll is kept wrapped to the patch
+        // size for float precision.
+        if (swimmer != null && Application.isPlaying)
+        {
+            // Threshold sits above her rummage motionScale (~0.55) so the scroll comes to a
+            // COMPLETE stop while she digs, and ramps back up to full as she resumes swimming.
+            float factor = Mathf.SmoothStep(0.6f, 0.97f, swimmer.motionScale);
+            Vector3 f = swimmer.transform.forward; f.y = 0f;
+            if (f.sqrMagnitude > 1e-4f) f.Normalize();
+            float speed = swimmer.cruiseSpeed * scrollScale * factor;
+            scroll.x -= f.x * speed * Time.deltaTime;
+            scroll.y -= f.z * speed * Time.deltaTime;
+            scroll.x = Mathf.Repeat(scroll.x, Mathf.Max(0.01f, patchSize.x));
+            scroll.y = Mathf.Repeat(scroll.y, Mathf.Max(0.01f, patchSize.y));
+        }
+        mat.SetVector(IdScroll, new Vector4(scroll.x, scroll.y, 0f, 0f));
+        mat.SetVector(IdPatchCenter, new Vector4(patchCenter.x, patchCenter.z, 0f, 0f));
+        mat.SetVector(IdPatchHalf, new Vector4(patchSize.x * 0.5f, patchSize.y * 0.5f, 0f, 0f));
 
         // Push body spheres to the shader so the grass parts around her. Only meaningful at
         // runtime (the procedural mermaid doesn't exist in edit mode).

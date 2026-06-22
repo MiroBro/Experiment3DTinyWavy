@@ -298,6 +298,7 @@ public class MermaidBootstrap : MonoBehaviour
             }
             field.bodyColliders = bodyColliders;
             field.bodyRadii = bodyRadii;
+            field.swimmer = swimmer;
         }
 
         // Forager — drives the pause/rummage/collect loop on its own GameObject. As with the

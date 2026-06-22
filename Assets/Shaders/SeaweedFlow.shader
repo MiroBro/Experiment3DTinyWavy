@@ -40,6 +40,9 @@ Shader "Seaweed/Flow"
                 float _SwayAmp;
                 float _WaveCount;
                 float _FlutterAmp;
+                float4 _Scroll;       // xy = world XZ scroll offset
+                float4 _PatchCenter;  // xy = patch centre XZ
+                float4 _PatchHalf;    // xy = patch half-size XZ
             CBUFFER_END
 
             struct Attributes
@@ -47,6 +50,7 @@ Shader "Seaweed/Flow"
                 float3 positionOS : POSITION;
                 float2 uv         : TEXCOORD0;
                 float4 swayData   : TEXCOORD1;
+                float2 rootXZ     : TEXCOORD2;
                 float4 color      : COLOR;
             };
 
@@ -68,6 +72,14 @@ Shader "Seaweed/Flow"
                 float  amp   = IN.swayData.w;
 
                 float3 wpos = TransformObjectToWorld(IN.positionOS);
+
+                // Treadmill: shift the whole blade by the scroll, wrapping within the patch
+                // footprint (so blades that pass behind her reappear ahead). All of a blade's
+                // verts share rootXZ, so the blade moves rigidly.
+                float2 lo = _PatchCenter.xy - _PatchHalf.xy;
+                float2 sizef = max(2.0 * _PatchHalf.xy, 0.001);
+                float2 wrapped = lo + frac((IN.rootXZ + _Scroll.xy - lo) / sizef) * sizef;
+                wpos.xz += (wrapped - IN.rootXZ);
 
                 // Traveling-wave sway, growing toward the tip so the base stays planted.
                 float bend    = pow(h, 1.5);
