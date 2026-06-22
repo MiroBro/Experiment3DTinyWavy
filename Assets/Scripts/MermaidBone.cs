@@ -26,6 +26,15 @@ public class MermaidBone : MonoBehaviour
     [System.NonSerialized] public Transform[] avoidanceColliders;
     [System.NonSerialized] public float[] avoidanceRadii;
 
+    /// <summary>
+    /// Optional world-space offset added to this bone's ideal target each frame. Default zero.
+    /// Driven at runtime (e.g. by <c>MermaidForager</c>) to make a hand/elbow "reach" toward
+    /// something — the offset shifts the target, so the bend cone re-centres on it and the
+    /// bone smooth-damps over rather than snapping. Keep it small relative to the bone length;
+    /// large offsets stretch the limb.
+    /// </summary>
+    [System.NonSerialized] public Vector3 reachOffsetWorld;
+
     [Header("Debug")]
     [Tooltip("Logs to Console whenever a constraint fires (cone clamp or hyperextension clamp). Use this to verify the constraint is doing anything.")]
     public bool debugLog = false;
@@ -102,6 +111,9 @@ public class MermaidBone : MonoBehaviour
         if (anchor == null) return;
 
         Vector3 idealPos = anchor.TransformPoint(localOffset);
+        // Reach: shift the target before any constraint runs so the cone re-centres on the
+        // reach pose and enforceRestDistance measures against it (a gentle reach, no snap).
+        idealPos += reachOffsetWorld;
 
         Vector3 newPos;
         if (smoothTime <= Mathf.Epsilon)

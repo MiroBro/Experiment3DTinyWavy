@@ -40,6 +40,20 @@ public class MermaidSwimmer : MonoBehaviour
     [Range(0f, 1.5f)]
     public float twirlRadius = 0.25f;
 
+    [Header("Foraging (runtime, driven by MermaidForager)")]
+    [Tooltip("1 = full swim. Driven toward ~0.15 by the forager so she slows to a near-stop and only faintly undulates while rummaging. Scales forward flow + body pitch; the bob is kept above a faint floor so she never goes fully rigid.")]
+    [Range(0f, 1f)]
+    public float motionScale = 1f;
+    [Tooltip("Lowest fraction of the porpoise bob that remains when motionScale is 0 — the 'faint undulation' she keeps while stopped to rummage. Higher = she keeps undulating more visibly while digging.")]
+    [Range(0f, 1f)]
+    public float faintUndulationFloor = 0.55f;
+    [Tooltip("Extra world-space translation of her whole body, driven by the forager so she leans in (down + forward) toward the seabed while rummaging. The chain follows, so her upper body dips toward her hands.")]
+    public Vector3 forageBodyOffsetWorld = Vector3.zero;
+    [Tooltip("When true, no NEW twirl will start (a twirl already in progress still finishes). The forager sets this while she's rummaging so she doesn't pirouette mid-dig.")]
+    public bool suppressTwirl = false;
+    [Tooltip("Extra downward head pitch (degrees) added on top of the swim pose. Driven by the forager so she tips her head to look down at her hands while rummaging. The neck/torso follow with the chain's lag, so her upper body curls to look down.")]
+    public float lookDownDeg = 0f;
+
     [Header("Debug")]
     public bool drawGizmos = true;
 
@@ -96,20 +110,28 @@ public class MermaidSwimmer : MonoBehaviour
         float omega = porpoiseFrequency * 2f * Mathf.PI;
         porpoisePhase += dt * omega;
 
-        float yOffset = Mathf.Sin(porpoisePhase) * porpoiseAmplitude;
-        float vy = Mathf.Cos(porpoisePhase) * porpoiseAmplitude * omega;
-        float vz = cruiseSpeed;
+        // motionScale scales how "alive" the swim is. The bob keeps a faint floor so she
+        // still gently undulates while stopped; pitch + forward flow scale all the way down
+        // so she levels out and her hair/tail settle as she pauses to rummage.
+        float m = Mathf.Clamp01(motionScale);
+        float ampScale = Mathf.Lerp(Mathf.Clamp01(faintUndulationFloor), 1f, m);
 
-        float pitchDeg = -Mathf.Atan2(vy, vz) * Mathf.Rad2Deg;
+        float yOffset = Mathf.Sin(porpoisePhase) * porpoiseAmplitude * ampScale;
+        float vy = Mathf.Cos(porpoisePhase) * porpoiseAmplitude * ampScale * omega;
+        float vzFull = cruiseSpeed;
+
+        float pitchDeg = -Mathf.Atan2(vy, vzFull) * Mathf.Rad2Deg * m + lookDownDeg;
         baseRotation = stationaryBaseRot * Quaternion.Euler(pitchDeg, 0f, 0f);
 
         var twirl = TickTwirl(dt);
         Vector3 twirlOffsetWorld = baseRotation * twirl.offsetLocal;
 
-        transform.position = stationaryBasePos + Vector3.up * yOffset + twirlOffsetWorld;
+        transform.position = stationaryBasePos + Vector3.up * yOffset + twirlOffsetWorld + forageBodyOffsetWorld;
         transform.rotation = baseRotation * Quaternion.Euler(0f, 0f, twirl.rollDeg);
 
-        SwimVelocity = stationaryBaseRot * new Vector3(0f, vy, vz);
+        // Forward virtual flow (what hair/tail react to) fades with motionScale so the
+        // streaming hair settles when she stops.
+        SwimVelocity = stationaryBaseRot * new Vector3(0f, vy, vzFull * m);
     }
 
     void UpdateSwimming(float dt)
@@ -186,6 +208,9 @@ public class MermaidSwimmer : MonoBehaviour
             }
             return output;
         }
+
+        // Don't start a new twirl while the forager has asked for quiet (mid-rummage).
+        if (suppressTwirl) return output;
 
         twirlIdleTimer += dt;
         if (twirlIdleTimer >= twirlInterval)

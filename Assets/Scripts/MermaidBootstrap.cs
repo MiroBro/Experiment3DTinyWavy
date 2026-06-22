@@ -149,6 +149,16 @@ public class MermaidBootstrap : MonoBehaviour
     [Tooltip("Rim/sheen highlight color on strand edges.")]
     public Color hairCurlRimColor = new Color(1.0f, 0.7f, 0.45f);
 
+    [Header("Seaweed / Foraging (spawned at runtime)")]
+    [Tooltip("Spawn a flowing seaweed bed beneath her that reacts to her body and hands.")]
+    public bool spawnSeaweed = true;
+    [Tooltip("Make her periodically pause and rummage in the grass for gems/rocks.")]
+    public bool enableForaging = true;
+    // NOTE: seaweed + foraging tuning lives on the SeaweedField and MermaidForager components
+    // (created at runtime, so select them in the Hierarchy while playing to tweak). It is
+    // intentionally NOT mirrored here — Bootstrap fields already saved in the scene freeze at
+    // their first value, so mirroring them would silently override the live defaults.
+
     [Header("Anchors (populated at runtime)")]
     public Transform root;
     public Transform driver;
@@ -212,18 +222,86 @@ public class MermaidBootstrap : MonoBehaviour
         BuildMermaid();
         WireCamera();
         EnsureSparkles();
+        EnsureForagingAndSeaweed();
         SnapshotShapeValues();
     }
 
     void EnsureSparkles()
     {
-        if (FindObjectOfType<SparkleSpawner>() != null) return;
+        if (FindAnyObjectByType<SparkleSpawner>() != null) return;
         var go = new GameObject("Sparkles");
         var spawner = go.AddComponent<SparkleSpawner>();
         spawner.handTransform = (handR != null) ? handR.transform : null;
         spawner.swimmer = swimmer;
         var ui = go.AddComponent<SparkleUI>();
         ui.spawner = spawner;
+    }
+
+    void EnsureForagingAndSeaweed()
+    {
+        // Shared inventory used by the forager and shown in the on-screen "Treasure" panel.
+        GemInventory inventory = null;
+        if (enableForaging)
+        {
+            inventory = FindAnyObjectByType<GemInventory>();
+            if (inventory == null)
+                inventory = new GameObject("GemInventory").AddComponent<GemInventory>();
+        }
+
+        // Body-avoidance spheres the seaweed is pushed out of. Reuses the same approach as
+        // the hair: a transform + radius per body part. Hands are included so rummaging
+        // visibly parts the grass. These transforms are stable for the whole run (the tail
+        // is intentionally left out — it gets rebuilt on the fly and would leave stale refs).
+        Transform[] bodyColliders = null;
+        float[] bodyRadii = null;
+        if (spawnSeaweed)
+        {
+            var cols = new List<Transform>();
+            var rad = new List<float>();
+            if (driver != null) { cols.Add(driver); rad.Add(0.40f); }
+            if (root != null)
+            {
+                var neck = root.Find("Neck");
+                if (neck != null) { cols.Add(neck); rad.Add(0.22f); }
+                var torso = root.Find("Torso");
+                if (torso != null) { cols.Add(torso); rad.Add(0.36f); }
+            }
+            if (hipPoint != null) { cols.Add(hipPoint); rad.Add(0.36f); }
+            if (handL != null) { cols.Add(handL.transform); rad.Add(0.17f); }
+            if (handR != null) { cols.Add(handR.transform); rad.Add(0.17f); }
+            bodyColliders = cols.ToArray();
+            bodyRadii = rad.ToArray();
+
+            // Use a hand-placed bed if one exists (editor preview workflow), else spawn one.
+            // Either way we only hand over the body colliders + (for a freshly spawned bed)
+            // shift it under the spawn point. Tuning is left to the SeaweedField's OWN script
+            // defaults — copying values from this Bootstrap would freeze them at whatever was
+            // first serialized into the scene component.
+            var field = FindAnyObjectByType<SeaweedField>();
+            if (field == null)
+            {
+                var fieldGO = new GameObject("SeaweedField");
+                field = fieldGO.AddComponent<SeaweedField>();
+                field.patchCenter += spawnPosition;
+            }
+            field.bodyColliders = bodyColliders;
+            field.bodyRadii = bodyRadii;
+        }
+
+        // Forager — drives the pause/rummage/collect loop on its own GameObject. As with the
+        // seaweed, all tuning (reach, look, cadence) is left to MermaidForager's own current
+        // defaults; we only wire the runtime references it can't know on its own.
+        if (enableForaging && FindAnyObjectByType<MermaidForager>() == null)
+        {
+            var forageGO = new GameObject("MermaidForager");
+            var forager = forageGO.AddComponent<MermaidForager>();
+            forager.swimmer = swimmer;
+            forager.handL = handL;
+            forager.handR = handR;
+            forager.elbowL = elbowL;
+            forager.elbowR = elbowR;
+            forager.inventory = inventory;
+        }
     }
 
     void SnapshotShapeValues()

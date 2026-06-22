@@ -16,9 +16,11 @@ public class TubeRenderer : MonoBehaviour
     public float aspectRatio = 1f;
     [Tooltip("Optional per-control-point aspect ratio. If set and matches points length, this overrides the single aspectRatio above. Lets you taper from round at one end to flat at the other.")]
     public float[] aspectRatios;
-    public enum FrameMode { ParallelTransport, WorldUpAligned }
-    [Tooltip("ParallelTransport: smooth, no pinching — best for ROUND tubes that wave through any orientation. WorldUpAligned: keeps the cross-section's wide axis horizontal — best for FLAT flukes/wings so they don't twist around their own axis.")]
+    public enum FrameMode { ParallelTransport, WorldUpAligned, FixedReference }
+    [Tooltip("ParallelTransport: smooth, no pinching — best for ROUND tubes that wave through any orientation. WorldUpAligned: keeps the cross-section's wide axis horizontal — best for FLAT flukes/wings so they don't twist around their own axis. FixedReference: locks the wide axis to referenceAxis (re-orthogonalized per ring) — best for FLAT near-VERTICAL ribbons (seaweed) where WorldUpAligned would go degenerate and ParallelTransport would let the ribbon spin/flicker around its length.")]
     public FrameMode frameMode = FrameMode.ParallelTransport;
+    [Tooltip("World-space wide-axis reference for FixedReference mode. Should not run parallel to the tube's length (e.g. for an upright blade pick a HORIZONTAL axis perpendicular to the blade's sway direction).")]
+    public Vector3 referenceAxis = Vector3.right;
     [Tooltip("Add flat round caps so the tube isn't open at the ends.")]
     public bool capEnds = true;
 
@@ -137,10 +139,15 @@ public class TubeRenderer : MonoBehaviour
                     u = delta * u;
                 }
             }
-            else // WorldUpAligned: recompute r from world up at each ring.
+            else if (frameMode == FrameMode.WorldUpAligned) // recompute r from world up at each ring.
             {
                 r = Vector3.Cross(Vector3.up, t);
                 if (r.sqrMagnitude < 0.0001f) r = Vector3.Cross(Vector3.right, t);
+            }
+            else // FixedReference: wide axis tracks a fixed world direction, re-orthogonalized below.
+            {
+                r = referenceAxis;
+                if (r.sqrMagnitude < 1e-6f) r = Vector3.right;
             }
 
             // Re-orthogonalize against the current tangent (kills numerical drift /
