@@ -63,6 +63,8 @@ public class Seaweed2D : MonoBehaviour
 
     float scroll;
     float scrollEase = 1f, scrollEaseVel;
+    float clock;
+    double lastRealTime;
 
     Mesh mesh;
     Vector3[] verts;
@@ -168,16 +170,29 @@ public class Seaweed2D : MonoBehaviour
         if (mesh == null || verts == null) Build();
         if (mesh == null || verts == null) return;
 
+        // Own clock: Time.time/deltaTime don't advance in edit mode, so accumulate a dt
+        // that works in both — the bootstrap's animated preview sways the bed like play.
+        float dt;
+        if (Application.isPlaying) dt = Time.deltaTime;
+        else
+        {
+            double now = Time.realtimeSinceStartupAsDouble;
+            dt = Mathf.Clamp((float)(now - lastRealTime), 0f, 0.05f);
+            lastRealTime = now;
+        }
+        clock += dt;
+
         // Treadmill scroll: full speed while cruising, eases to 0 while she rummages.
         // Remap motionScale to 0..1 across [0.6, 0.97]; rummage motionScale (~0.55) -> 0.
         if (swimmer != null)
         {
             float t = Mathf.Clamp01((swimmer.motionScale - 0.6f) / 0.37f);
             float target = t * t * (3f - 2f * t);
-            scrollEase = Mathf.SmoothDamp(scrollEase, target, ref scrollEaseVel, Mathf.Max(0.01f, scrollEaseTime));
+            scrollEase = Mathf.SmoothDamp(scrollEase, target, ref scrollEaseVel,
+                Mathf.Max(0.01f, scrollEaseTime), Mathf.Infinity, dt);
 
             float speed = swimmer.cruiseSpeed * scrollScale * scrollEase;
-            scroll += speed * Time.deltaTime;
+            scroll += speed * dt;
             scroll = Mathf.Repeat(scroll, Mathf.Max(0.01f, patchWidth));
         }
 
@@ -189,7 +204,7 @@ public class Seaweed2D : MonoBehaviour
     {
         int N = Mathf.Max(2, segments);
         int rings = N + 1;
-        float time = Application.isPlaying ? Time.time : 0f;
+        float time = clock;
         float w = Mathf.Max(0.01f, patchWidth);
         float swayOmega = swayFrequency * 2f * Mathf.PI;
 

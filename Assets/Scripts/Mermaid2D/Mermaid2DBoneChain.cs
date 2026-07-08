@@ -23,7 +23,15 @@ public class Mermaid2DBoneChain : MonoBehaviour
 
     void LateUpdate()
     {
-        float dt = Time.deltaTime;
+        TickAll(Time.deltaTime);
+    }
+
+    /// <summary>
+    /// Tick every bone once with dt. Split out from LateUpdate so the bootstrap's edit-mode
+    /// preview can drive the same simulation from an editor tick (LateUpdate never runs there).
+    /// </summary>
+    public void TickAll(float dt)
+    {
         for (int i = 0; i < bones.Count; i++)
             if (bones[i] != null) bones[i].Tick(dt);
     }

@@ -36,16 +36,32 @@ public class Mermaid2DSwimmer : MonoBehaviour
 
     Vector3 basePos;
     float porpoisePhase;
+    bool baseCaptured;
 
     void Start()
     {
+        CaptureBasePosition();
+    }
+
+    void CaptureBasePosition()
+    {
         basePos = transform.position;
         basePos.z = 0f;
+        baseCaptured = true;
     }
 
     void Update()
     {
-        float dt = Time.deltaTime;
+        Step(Time.deltaTime);
+    }
+
+    /// <summary>
+    /// Advance the swim by dt. Split out from Update so the bootstrap's edit-mode preview
+    /// can drive the exact same simulation from an editor tick (Update never runs there).
+    /// </summary>
+    public void Step(float dt)
+    {
+        if (!baseCaptured) CaptureBasePosition();
         if (dt <= Mathf.Epsilon) return;
 
         float omega = porpoiseFrequency * 2f * Mathf.PI;

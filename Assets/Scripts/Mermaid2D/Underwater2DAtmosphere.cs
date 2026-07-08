@@ -7,7 +7,9 @@ using System.Collections.Generic;
 /// (parented to the camera), slowly swaying god-ray shafts, drifting plankton motes (front
 /// and back layers), and a dark seabed strip with a lit sand line. Everything is unlit
 /// Sprites/Default, layered purely with sortingOrder.
+/// Runs in edit mode too (own clock) so the bootstrap's animated preview drifts like play.
 /// </summary>
+[ExecuteAlways]
 public class Underwater2DAtmosphere : MonoBehaviour
 {
     [Header("Water Mood")]
@@ -289,9 +291,22 @@ public class Underwater2DAtmosphere : MonoBehaviour
         Random.state = prev;
     }
 
+    float clock;
+    double lastRealTime;
+
     void Update()
     {
-        float time = Time.time;
+        // Own clock: Time.time/deltaTime don't advance in edit mode.
+        float dt;
+        if (Application.isPlaying) dt = Time.deltaTime;
+        else
+        {
+            double now = Time.realtimeSinceStartupAsDouble;
+            dt = Mathf.Clamp((float)(now - lastRealTime), 0f, 0.05f);
+            lastRealTime = now;
+        }
+        clock += dt;
+        float time = clock;
 
         // God rays: slow alpha shimmer + a gentle pendulum sway.
         for (int i = 0; i < rays.Count; i++)
@@ -304,7 +319,6 @@ public class Underwater2DAtmosphere : MonoBehaviour
         }
 
         // Motes: drift backward past her, wobble vertically, wrap around the view.
-        float dt = Time.deltaTime;
         for (int i = 0; i < motes.Count; i++)
         {
             var mo = motes[i];

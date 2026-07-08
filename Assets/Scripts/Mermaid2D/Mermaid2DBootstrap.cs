@@ -55,6 +55,17 @@ public class Mermaid2DBootstrap : MonoBehaviour
     [Range(0f, 180f)] public float handMaxBendAngleDeg = 31.9f;
     [Range(0f, 180f)] public float elbowMaxBendAngleDeg = 97.2f;
 
+    [Header("Body Structure (live-editable)")]
+    [Tooltip("Bend limit between spine links (head→neck→torso→hip), in degrees. This is her 'core strength': lower = the body rights itself quickly behind the head instead of trailing like a ribbon. 0 = no limit (pure lag).")]
+    [Range(0f, 180f)]
+    public float spineMaxBendDeg = 25f;
+    [Tooltip("Bend limit per tail link, in degrees. Lower = a shallower, more controlled tail wave with fewer stacked S-curves. 0 = no limit.")]
+    [Range(0f, 180f)]
+    public float tailMaxBendDeg = 18f;
+    [Tooltip("Bend limit per fluke link. Higher = loose fabric feel. 0 = no limit.")]
+    [Range(0f, 180f)]
+    public float flukeMaxBendDeg = 50f;
+
     [Header("Tail (live-editable; rebuilds on segments/length change)")]
     [Range(3, 32)] public int tailSegments = 24;
     public float tailLength = 2.98f;
@@ -143,18 +154,20 @@ public class Mermaid2DBootstrap : MonoBehaviour
     // rocks, sparkles, motes, backdrop, ground) take a SPRITE, auto-fitted to the same size
     // as the procedural shape they replace. When a material override is set, the ribbon's
     // vertex tint is forced to white so your art shows untinted.
+    // Ribbon UV mapping (all these parts): image X runs along the part with image LEFT =
+    // far tip and image RIGHT = attachment (hip/shoulder/scalp/chest); image Y = width.
     [Header("Custom Art — deforming parts (materials)")]
-    [Tooltip("Torso ribbon material (UVs: V=0 head → V=1 hip).")]
+    [Tooltip("Torso ribbon material. Usually you want the simpler torsoTexture slot below instead.")]
     public Material torsoMaterial;
-    [Tooltip("Tail ribbon material (UVs: V=0 hip → V=1 tip). E.g. a scales texture.")]
+    [Tooltip("Tail ribbon material (e.g. a custom scales shader). For a plain painted texture use tailTexture below.")]
     public Material tailMaterial;
-    [Tooltip("Fluke lobe material (UVs: V=0 tail tip → V=1 fin tip).")]
+    [Tooltip("Fluke lobe material. For a plain painted texture use flukeTexture below.")]
     public Material flukeMaterial;
-    [Tooltip("Arm ribbon material (UVs: V=0 shoulder → V=1 wrist). Used by both arms; the far arm is still darkened for depth.")]
+    [Tooltip("Arm ribbon material. Used by both arms; the far arm is still darkened for depth.")]
     public Material armMaterial;
-    [Tooltip("Hair lock material (UVs: V=0 scalp → V=1 tip). Per-lock color variation is disabled when set.")]
+    [Tooltip("Hair lock material. Per-lock color variation is disabled when set.")]
     public Material hairMaterial;
-    [Tooltip("Seaweed blade material for BOTH layers (UVs: V=0 root → V=1 tip). Green vertex tint is disabled when set; root darkening is kept.")]
+    [Tooltip("Seaweed blade material for BOTH layers. Green vertex tint is disabled when set; root darkening is kept.")]
     public Material seaweedMaterial;
 
     [Header("Custom Art — rigid parts (sprites)")]
@@ -176,6 +189,34 @@ public class Mermaid2DBootstrap : MonoBehaviour
     public Sprite moteSprite;
     [Tooltip("God-ray material override (e.g. additive). Needs a _Color tint property for the shimmer.")]
     public Material godRayMaterial;
+
+    // Paintable slots: drag a plain PNG (default import settings) straight in — no material
+    // or Sprite setup needed. PAINT THE PART AS IT APPEARS ON SCREEN (she faces right):
+    // image LEFT = the far end (tail tip / fluke tip / hand / hair tip), image RIGHT = where
+    // it attaches (hip / shoulder / scalp / chest), image height = the part's width. The
+    // texture bends and flows with the ribbon animation. If both a material and a texture
+    // are set for a part, the material wins.
+    [Header("Custom Art — paintable textures (drag a PNG straight in)")]
+    [Tooltip("Painted torso. Image right = chest/head end, image left = hip.")]
+    public Texture2D torsoTexture;
+    [Tooltip("Painted tail. Image right = hip, image left = tail tip.")]
+    public Texture2D tailTexture;
+    [Tooltip("Painted fluke lobe (used for both lobes). Image right = tail tip, image left = fin tip.")]
+    public Texture2D flukeTexture;
+    [Tooltip("Painted arm. Image right = shoulder, image left = wrist. Far arm is auto-darkened.")]
+    public Texture2D armTexture;
+    [Tooltip("Painted hair lock (used for every lock). Image right = scalp, image left = hair tip.")]
+    public Texture2D hairTexture;
+    [Tooltip("Painted seaweed blade (used for every blade). Image bottom = root, image top = blade tip.")]
+    public Texture2D seaweedTexture;
+    [Tooltip("Painted head with face, side view facing right. Same as headSprite but accepts a plain texture.")]
+    public Texture2D headTexture;
+    [Tooltip("Painted hand.")]
+    public Texture2D handTexture;
+
+    [Header("Editor Preview")]
+    [Tooltip("Animate the edit-mode preview with the exact same swim + bone-lag simulation as play mode (she undulates in the Scene view without pressing Play). Costs some editor CPU while the scene is open.")]
+    public bool animatePreview = true;
 
     [Header("Extras")]
     [Tooltip("Gold crown, necklace and armbands.")]
@@ -221,6 +262,7 @@ public class Mermaid2DBootstrap : MonoBehaviour
     Mermaid2DSwimmer swimmer;
     Mermaid2DBoneChain chain;
     Mermaid2DBone elbowNear, elbowFar, handNear, handFar;
+    readonly List<Mermaid2DBone> spineBones = new List<Mermaid2DBone>();
 
     // Tail/fluke runtime state — tracked separately so we can rebuild on the fly.
     readonly List<GameObject> tailGameObjects = new List<GameObject>();
@@ -278,6 +320,18 @@ public class Mermaid2DBootstrap : MonoBehaviour
 #endif
             return;
         }
+        EnsureRuntimeBuild();
+    }
+
+    bool _runtimeBuilt;
+
+    // Also called from Update: with Enter Play Mode Options (no scene reload) Awake is
+    // never re-called on play, which would otherwise leave only the un-tuned edit preview
+    // in the game.
+    void EnsureRuntimeBuild()
+    {
+        if (_runtimeBuilt && root != null) return;
+        _runtimeBuilt = true;
         DestroyPreview();      // a DontSave preview can survive into play mode
         ClearBuildState();
         ApplyFrameCap();
@@ -297,6 +351,7 @@ public class Mermaid2DBootstrap : MonoBehaviour
 
     void ClearBuildState()
     {
+        spineBones.Clear();
         boneEntries.Clear();
         tailGameObjects.Clear();
         tailFlukeBones.Clear();
@@ -319,20 +374,85 @@ public class Mermaid2DBootstrap : MonoBehaviour
 
     void DestroyPreview()
     {
+        // Marker-based sweep — catches the preview even if it was renamed or duplicated.
+        var markers = FindObjectsByType<Mermaid2DPreviewMarker>(FindObjectsInactive.Include, FindObjectsSortMode.None);
+        foreach (var m in markers)
+        {
+            if (m == null) continue;
+            if (Application.isPlaying) { m.gameObject.SetActive(false); Destroy(m.gameObject); }
+            else DestroyImmediate(m.gameObject);
+        }
+        // Name-based fallback.
         for (var existing = GameObject.Find(PreviewRootName); existing != null;
              existing = GameObject.Find(PreviewRootName))
         {
-            if (Application.isPlaying) { Destroy(existing); break; }
+            if (Application.isPlaying) { existing.SetActive(false); Destroy(existing); break; }
             DestroyImmediate(existing);
+        }
+
+        // Stale SAVED copies: the whole mermaid is procedural, so any bone-chain hierarchy
+        // found here (our own preview/runtime chains were already handled above) is junk an
+        // older preview accidentally saved into the scene file — it would swim alongside
+        // the real mermaid with stale tuning. Destroy it and dirty the scene so a save
+        // persists the cleanup.
+        var staleChains = FindObjectsByType<Mermaid2DBoneChain>(FindObjectsInactive.Include, FindObjectsSortMode.None);
+        foreach (var c in staleChains)
+        {
+            if (c == null || (chain != null && c == chain)) continue;
+            var go = c.gameObject;
+            Debug.LogWarning($"Mermaid2DBootstrap: removed stale saved mermaid '{go.name}' — save the scene to make the cleanup permanent.", this);
+            if (Application.isPlaying) { go.SetActive(false); Destroy(go); }
+            else
+            {
+#if UNITY_EDITOR
+                UnityEditor.SceneManagement.EditorSceneManager.MarkSceneDirty(go.scene);
+#endif
+                DestroyImmediate(go);
+            }
         }
     }
 
 #if UNITY_EDITOR
     bool _previewQueued;
+    double _lastEditorTickTime;
 
     void OnEnable()
     {
-        if (!Application.isPlaying) SchedulePreviewRebuild();
+        if (!Application.isPlaying)
+        {
+            SchedulePreviewRebuild();
+            _lastEditorTickTime = UnityEditor.EditorApplication.timeSinceStartup;
+            UnityEditor.EditorApplication.update -= EditorPreviewTick;
+            UnityEditor.EditorApplication.update += EditorPreviewTick;
+        }
+    }
+
+    void OnDisable()
+    {
+        UnityEditor.EditorApplication.update -= EditorPreviewTick;
+    }
+
+    // Edit-mode animation: run the EXACT same simulation as play mode — live tuning, the
+    // swimmer's porpoise bob, then the lagged bone chain — driven off the editor clock.
+    // The queued player-loop update then runs the [ExecuteAlways] visuals (Ribbon2D,
+    // Seaweed2D, GentleBillow2D, Underwater2DAtmosphere) and repaints, so the preview
+    // mermaid swims in the Scene view without entering play mode.
+    void EditorPreviewTick()
+    {
+        double now = UnityEditor.EditorApplication.timeSinceStartup;
+        float dt = Mathf.Clamp((float)(now - _lastEditorTickTime), 0f, 0.05f);
+        _lastEditorTickTime = now;
+
+        if (Application.isPlaying || UnityEditor.EditorApplication.isPlayingOrWillChangePlaymode) return;
+        if (!animatePreview || dt <= 0f) return;
+        if (root == null || swimmer == null || chain == null) return;
+
+        ApplyLiveTick();
+        swimmer.Step(dt);
+        chain.TickAll(dt);
+
+        UnityEditor.EditorApplication.QueuePlayerLoopUpdate();
+        UnityEditor.SceneView.RepaintAll();
     }
 
     void OnValidate()
@@ -347,7 +467,10 @@ public class Mermaid2DBootstrap : MonoBehaviour
         UnityEditor.EditorApplication.delayCall += () =>
         {
             _previewQueued = false;
-            if (this == null || Application.isPlaying) return;
+            if (this == null) return;
+            // Never (re)build a preview while entering play mode — that's how you end up
+            // with a second, un-tuned mermaid in the game.
+            if (Application.isPlaying || UnityEditor.EditorApplication.isPlayingOrWillChangePlaymode) return;
             RebuildPreview();
         };
     }
@@ -364,6 +487,7 @@ public class Mermaid2DBootstrap : MonoBehaviour
         ClearBuildState();
         var prev = new GameObject(PreviewRootName);
         prev.hideFlags = HideFlags.DontSave;
+        prev.AddComponent<Mermaid2DPreviewMarker>();
 
         // The mermaid at her rest pose (chains don't simulate in edit mode). Lifted by the
         // forager's cruise height so she previews where she actually swims.
@@ -454,6 +578,14 @@ public class Mermaid2DBootstrap : MonoBehaviour
         var hipBone = MakeBone("Hip", new Vector2(-0.55f, 0f), torsoBone, hipSmoothTime);
         hipPoint = hipBone;
 
+        // Core strength: the spine may lag, but only bends so far before it rights itself.
+        foreach (var t in new[] { neckBone, torsoBone, hipBone })
+        {
+            var mb = t.GetComponent<Mermaid2DBone>();
+            mb.maxBendAngleDeg = spineMaxBendDeg;
+            spineBones.Add(mb);
+        }
+
         // Arms — near (screen-front) and far (behind the body, darker). Anchored to the neck.
         for (int side = 0; side < 2; side++)
         {
@@ -474,24 +606,26 @@ public class Mermaid2DBootstrap : MonoBehaviour
             if (near) { elbowNear = elbowMB; handNear = handMB; }
             else { elbowFar = elbowMB; handFar = handMB; }
 
-            // With a custom arm material the tint is white (near) / gray (far) so the
-            // texture shows as drawn but the far arm still recedes.
+            // With custom arm art the tint is white (near) / gray (far) so the texture
+            // shows as drawn but the far arm still recedes.
+            Material armArt = RibbonArt(armMaterial, armTexture);
             Color armCol;
-            if (armMaterial != null) armCol = near ? Color.white : new Color(0.68f, 0.68f, 0.68f, 1f);
+            if (armArt != null) armCol = near ? Color.white : new Color(0.68f, 0.68f, 0.68f, 1f);
             else armCol = near ? skinColor : skinColor * 0.68f;
             armCol.a = 1f;
             var armRibbon = MakeRibbon("ArmRibbon" + sfx, new[] { shoulder, elbow, hand },
-                armWidthCurve, 1f, 14, armCol, armCol, near ? OrderNearArm : OrderFarArm, armMaterial);
+                armWidthCurve, 1f, 14, armCol, armCol, near ? OrderNearArm : OrderFarArm, armArt);
             armRibbon.roundCaps = true;
 
-            if (handSprite != null)
-                MakeSpriteFit("HandSprite" + sfx, hand, Vector2.zero, handSprite, 0.17f,
-                    near ? Color.white : new Color(0.68f, 0.68f, 0.68f, 1f),
-                    near ? OrderNearHand : OrderFarHand);
-            else
-                MakeDisc("HandDisc" + sfx, hand, Vector2.zero, 0.085f,
-                    armMaterial != null ? (near ? skinColor : skinColor * 0.68f) : armCol,
-                    near ? OrderNearHand : OrderFarHand);
+            // Hands are ALWAYS SpriteRenderers too (paintable the same way as the head).
+            var handArt = SpriteArt(handSprite, handTexture);
+            bool customHand = handArt != null;
+            if (!customHand) handArt = CircleSprite();
+            Color handCol;
+            if (customHand) handCol = near ? Color.white : new Color(0.68f, 0.68f, 0.68f, 1f);
+            else { handCol = near ? skinColor : skinColor * 0.68f; handCol.a = 1f; }
+            MakeSpriteFit("HandSprite" + sfx, hand, Vector2.zero, handArt, 0.17f, handCol,
+                near ? OrderNearHand : OrderFarHand);
 
             if (goldJewelry && near)
                 MakeQuad("Armband", elbow, new Vector2(0.10f, 0.02f), new Vector2(0.15f, 0.05f), 25f, goldColor, OrderNearArm + 1);
@@ -502,11 +636,12 @@ public class Mermaid2DBootstrap : MonoBehaviour
 
         // Torso ribbon: head → neck → torso → hip, feminine profile, skin blending to gold
         // at the hip where the tail begins.
-        Color torsoStart = torsoMaterial != null ? Color.white : skinColor;
-        Color torsoEnd = torsoMaterial != null ? Color.white : Color.Lerp(hipColor, goldColor, 0.45f);
+        Material torsoArt = RibbonArt(torsoMaterial, torsoTexture);
+        Color torsoStart = torsoArt != null ? Color.white : skinColor;
+        Color torsoEnd = torsoArt != null ? Color.white : Color.Lerp(hipColor, goldColor, 0.45f);
         torsoEnd.a = 1f;
         MakeRibbon("TorsoRibbon", new[] { driver, neckBone, torsoBone, hipBone },
-            torsoWidthCurve, 1f, 26, torsoStart, torsoEnd, OrderTorso, torsoMaterial);
+            torsoWidthCurve, 1f, 26, torsoStart, torsoEnd, OrderTorso, torsoArt);
 
         BuildTail(hipBone);
         Transform tailTip = (tailBonesOrdered.Count > 0)
@@ -538,6 +673,7 @@ public class Mermaid2DBootstrap : MonoBehaviour
 
             tubePoints[i + 1] = seg;
             var mb = seg.GetComponent<Mermaid2DBone>();
+            mb.maxBendAngleDeg = tailMaxBendDeg;
             tailFlukeBones.Add(mb);
             tailBoneSet.Add(mb);
             tailBonesOrdered.Add(mb);
@@ -545,10 +681,11 @@ public class Mermaid2DBootstrap : MonoBehaviour
             prev = seg;
         }
 
+        Material tailArt = RibbonArt(tailMaterial, tailTexture);
         var ribbon = MakeRibbon("TailRibbon", tubePoints, tailWidthCurve, 1f, 52,
-            tailMaterial != null ? Color.white : goldColor,
-            tailMaterial != null ? Color.white : goldDeepColor,
-            OrderTail, tailMaterial);
+            tailArt != null ? Color.white : goldColor,
+            tailArt != null ? Color.white : goldDeepColor,
+            OrderTail, tailArt);
         tailGameObjects.Add(ribbon.gameObject);
     }
 
@@ -578,6 +715,7 @@ public class Mermaid2DBootstrap : MonoBehaviour
 
                 tubePoints[i + 1] = seg;
                 var mb = seg.GetComponent<Mermaid2DBone>();
+                mb.maxBendAngleDeg = flukeMaxBendDeg;
                 tailFlukeBones.Add(mb);
                 flukeBoneSet.Add(mb);
                 tailGameObjects.Add(seg.gameObject);
@@ -586,10 +724,11 @@ public class Mermaid2DBootstrap : MonoBehaviour
             }
 
             Color flukeTipCol = Color.Lerp(goldDeepColor, hairShadowColor, 0.3f); flukeTipCol.a = 1f;
+            Material flukeArt = RibbonArt(flukeMaterial, flukeTexture);
             var ribbon = MakeRibbon($"FlukeRibbon{suffix}", tubePoints, flukeWidthCurve, 1f, 34,
-                flukeMaterial != null ? Color.white : goldDeepColor,
-                flukeMaterial != null ? Color.white : flukeTipCol,
-                OrderFluke, flukeMaterial);
+                flukeArt != null ? Color.white : goldDeepColor,
+                flukeArt != null ? Color.white : flukeTipCol,
+                OrderFluke, flukeArt);
             tailGameObjects.Add(ribbon.gameObject);
         }
     }
@@ -610,16 +749,20 @@ public class Mermaid2DBootstrap : MonoBehaviour
         scalpGO.transform.localPosition = (Vector3)hairRootOffset;
         headScalp = scalpGO.transform;
 
-        if (headSprite != null)
-        {
-            // Custom head art (face included in the sprite) — skip the procedural features.
-            MakeSpriteFit("HeadSprite", headBone, Vector2.zero, headSprite, 0.62f, Color.white, OrderHead);
-        }
-        else
-        {
-            MakeDisc("HeadDisc", headBone, Vector2.zero, 0.30f, skinColor, OrderHead);
+        // The head is ALWAYS a SpriteRenderer, so you can paint one in Photoshop and just
+        // swap it (drag a PNG into headTexture on this component, or a Sprite into
+        // headSprite — or even directly onto the HeadSprite object's SpriteRenderer).
+        // Without custom art it shows a generated skin-colored circle + procedural face.
+        var headArt = SpriteArt(headSprite, headTexture);
+        bool customHead = headArt != null;
+        if (!customHead) headArt = CircleSprite();
+        MakeSpriteFit("HeadSprite", headBone, Vector2.zero, headArt, customHead ? 0.62f : 0.60f,
+            customHead ? Color.white : skinColor, OrderHead);
 
+        if (!customHead)
+        {
             // Face: tilted almond eye + brow + a hint of lips (side view shows one of each).
+            // Skipped entirely when you provide painted head art (paint the face in).
             var eyeCol = new Color(0.05f, 0.025f, 0.02f);
             var eye = MakeDisc("Eye", headBone, new Vector2(0.16f, 0.04f), 1f, eyeCol, OrderFace);
             eye.transform.localScale = new Vector3(0.058f, 0.028f, 1f);
@@ -702,9 +845,12 @@ public class Mermaid2DBootstrap : MonoBehaviour
 
     // ---------------------------------------------------------------- build: hair
 
+    Material _hairArt;   // shared by all locks (explicit material or wrapped painted texture)
+
     void BuildHair()
     {
         if (headScalp == null) return;
+        _hairArt = RibbonArt(hairMaterial, hairTexture);
 
         var prevState = Random.state;
         Random.InitState(hairSeed);
@@ -766,7 +912,7 @@ public class Mermaid2DBootstrap : MonoBehaviour
             int order = frontLock ? OrderFrontLock : (-12 + (s % 6));
 
             Color start, end;
-            if (hairMaterial != null)
+            if (_hairArt != null)
             {
                 start = Color.white;
                 end = Color.white;
@@ -779,7 +925,7 @@ public class Mermaid2DBootstrap : MonoBehaviour
             start.a = 1f; end.a = 1f;
 
             var ribbon = MakeRibbon($"HairRibbon{s:D2}", tubePoints, hairWidthCurve, hairWidthScale,
-                44, start, end, order, hairMaterial);
+                44, start, end, order, _hairArt);
             hairRibbons.Add(ribbon);
             hairGameObjects.Add(ribbon.gameObject);
         }
@@ -981,10 +1127,11 @@ public class Mermaid2DBootstrap : MonoBehaviour
         field.bodyCircles = circles;
         field.bodyRadii = radii;
         field.swimmer = swimmer;
-        field.useVertexTint = seaweedMaterial == null;
+        Material seaweedArt = RibbonArt(seaweedMaterial, seaweedTexture);
+        field.useVertexTint = seaweedArt == null;
 
         var mr = go.GetComponent<MeshRenderer>();
-        mr.sharedMaterial = seaweedMaterial != null ? seaweedMaterial : SpriteMat(Color.white);
+        mr.sharedMaterial = seaweedArt != null ? seaweedArt : SpriteMat(Color.white);
         mr.sortingOrder = order;
         return go;
     }
@@ -1053,9 +1200,29 @@ public class Mermaid2DBootstrap : MonoBehaviour
 
     void Update()
     {
-        // Edit mode: the preview rebuilds via OnValidate; none of the live-tick logic runs.
+        // Edit mode: the preview rebuilds via OnValidate and animates via EditorPreviewTick.
         if (!Application.isPlaying) return;
 
+        // Covers Enter Play Mode Options (no scene reload), where Awake never re-runs.
+        EnsureRuntimeBuild();
+
+        ApplyLiveTick();
+
+        // Shape changes — rebuild affected groups. (Edit mode instead rebuilds the whole
+        // preview via OnValidate, so this only runs in play.)
+        if (TailFlukeShapeChanged()) RebuildTailAndFluke();
+        if (HairShapeChanged()) RebuildHair();
+        SnapshotShapeValues();
+
+        // Live frame cap changes.
+        ApplyFrameCap();
+    }
+
+    // Everything live-editable that must hit the CURRENT build every frame. Shared verbatim
+    // between play mode (Update above) and the edit-mode preview animation (EditorPreviewTick),
+    // so the preview's motion tuning — flow multipliers, bend limits — matches play exactly.
+    void ApplyLiveTick()
+    {
         // 1. Live smoothTime updates with per-group flow multipliers.
         float gm = Mathf.Max(0f, globalSmoothMultiplier);
         float tm = Mathf.Max(0.01f, tailFlowMultiplier);
@@ -1088,26 +1255,26 @@ public class Mermaid2DBootstrap : MonoBehaviour
         if (elbowNear != null) elbowNear.maxBendAngleDeg = elbowMaxBendAngleDeg;
         if (elbowFar != null) elbowFar.maxBendAngleDeg = elbowMaxBendAngleDeg;
 
+        // 3b. Live body structure (spine core strength + tail/fluke wave limits).
+        for (int i = 0; i < spineBones.Count; i++)
+            if (spineBones[i] != null) spineBones[i].maxBendAngleDeg = spineMaxBendDeg;
+        for (int i = 0; i < tailBonesOrdered.Count; i++)
+            if (tailBonesOrdered[i] != null) tailBonesOrdered[i].maxBendAngleDeg = tailMaxBendDeg;
+        foreach (var fb in flukeBoneSet)
+            if (fb != null) fb.maxBendAngleDeg = flukeMaxBendDeg;
+
         // 4. Live-editable hair root position + hair widths.
         if (headScalp != null) headScalp.localPosition = (Vector3)hairRootOffset;
         for (int i = 0; i < hairRibbons.Count; i++)
             if (hairRibbons[i] != null) hairRibbons[i].widthScale = hairWidthScale;
 
-        // 5. Shape changes — rebuild affected groups.
-        if (TailFlukeShapeChanged()) RebuildTailAndFluke();
-        if (HairShapeChanged()) RebuildHair();
-        SnapshotShapeValues();
-
-        // 6. Hair-body collider refresh.
+        // 5. Hair-body collider refresh.
         if (hairAvoidsHead != _lastHairAvoidsHead)
         {
             _lastHairAvoidsHead = hairAvoidsHead;
             RebuildHairColliders();
         }
         UpdateHairColliderRadii();
-
-        // 7. Live frame cap changes.
-        ApplyFrameCap();
     }
 
     // ---------------------------------------------------------------- cosmetics API
@@ -1128,7 +1295,7 @@ public class Mermaid2DBootstrap : MonoBehaviour
             RebuildHair();
 
             var tail = root.Find("TailRibbon");
-            if (tail != null && tailMaterial == null)
+            if (tail != null && tailMaterial == null && tailTexture == null)
             {
                 var rib = tail.GetComponent<Ribbon2D>();
                 if (rib != null) { rib.colorStart = goldColor; rib.colorEnd = goldDeepColor; }
@@ -1136,7 +1303,7 @@ public class Mermaid2DBootstrap : MonoBehaviour
             foreach (var lobeName in new[] { "FlukeRibbonUp", "FlukeRibbonDown" })
             {
                 var lobe = root.Find(lobeName);
-                if (lobe != null && flukeMaterial == null)
+                if (lobe != null && flukeMaterial == null && flukeTexture == null)
                 {
                     var rib = lobe.GetComponent<Ribbon2D>();
                     if (rib != null)
@@ -1154,7 +1321,7 @@ public class Mermaid2DBootstrap : MonoBehaviour
                 if (mr != null && mr.material != null) mr.material.color = hairColor;
             }
             var torso = root.Find("TorsoRibbon");
-            if (torso != null && torsoMaterial == null)
+            if (torso != null && torsoMaterial == null && torsoTexture == null)
             {
                 var rib = torso.GetComponent<Ribbon2D>();
                 if (rib != null)
@@ -1324,5 +1491,51 @@ public class Mermaid2DBootstrap : MonoBehaviour
     static Material SpriteMat(Color c)
     {
         return new Material(Shader.Find("Sprites/Default")) { color = c };
+    }
+
+    // Effective ribbon override: explicit material wins, else wrap a painted texture.
+    static Material RibbonArt(Material mat, Texture2D tex)
+    {
+        if (mat != null) return mat;
+        if (tex != null) return new Material(Shader.Find("Sprites/Default")) { mainTexture = tex, color = Color.white };
+        return null;
+    }
+
+    // Effective rigid-part sprite: explicit sprite wins, else wrap a painted texture.
+    static Sprite SpriteArt(Sprite sprite, Texture2D tex)
+    {
+        if (sprite != null) return sprite;
+        if (tex == null) return null;
+        return Sprite.Create(tex, new Rect(0, 0, tex.width, tex.height), new Vector2(0.5f, 0.5f), 100f);
+    }
+
+    // Generated anti-aliased white circle sprite — the placeholder for the head/hands
+    // until you paint your own (tinted via SpriteRenderer.color).
+    static Sprite _circleSprite;
+    static Sprite CircleSprite()
+    {
+        if (_circleSprite != null) return _circleSprite;
+        const int S = 64;
+        var tex = new Texture2D(S, S, TextureFormat.RGBA32, false)
+        {
+            filterMode = FilterMode.Bilinear,
+            wrapMode = TextureWrapMode.Clamp,
+        };
+        var px = new Color32[S * S];
+        float c = (S - 1) * 0.5f;
+        float rMax = c - 1f;
+        for (int y = 0; y < S; y++)
+        {
+            for (int x = 0; x < S; x++)
+            {
+                float dx = x - c, dy = y - c;
+                float a = Mathf.Clamp01((rMax - Mathf.Sqrt(dx * dx + dy * dy)) / 1.5f);
+                px[y * S + x] = new Color32(255, 255, 255, (byte)(a * 255f));
+            }
+        }
+        tex.SetPixels32(px);
+        tex.Apply(false, true);
+        _circleSprite = Sprite.Create(tex, new Rect(0, 0, S, S), new Vector2(0.5f, 0.5f), 100f);
+        return _circleSprite;
     }
 }

@@ -50,18 +50,28 @@ public class GemGameManager : MonoBehaviour
         State = MermaidGameState.LoadOrNew();
     }
 
+    bool _wired;
+
     void Start()
     {
+        EnsureEventSystem();
+        EnsureWiring();
+    }
+
+    // The mermaid may be built a frame late (Enter Play Mode Options), so wiring retries
+    // from Update until the forager exists.
+    void EnsureWiring()
+    {
+        if (_wired) return;
         if (bootstrap == null) bootstrap = FindAnyObjectByType<Mermaid2DBootstrap>();
         if (forager == null) forager = FindAnyObjectByType<Mermaid2DForager>();
         if (atmosphere == null) atmosphere = FindAnyObjectByType<Underwater2DAtmosphere>();
-        if (forager != null)
-        {
-            forager.gameManager = this;
-            defaultMinCruise = forager.minCruise;
-            defaultMaxCruise = forager.maxCruise;
-        }
-        EnsureEventSystem();
+        if (forager == null) return;
+
+        _wired = true;
+        forager.gameManager = this;
+        defaultMinCruise = forager.minCruise;
+        defaultMaxCruise = forager.maxCruise;
         ApplyLocationVisuals();
         ApplyEquippedCosmetics();
         onStateChanged?.Invoke();
@@ -77,6 +87,7 @@ public class GemGameManager : MonoBehaviour
 
     void Update()
     {
+        EnsureWiring();
         State.PruneBuffs();
         State.EnsureQuests();
         UpdateHaste();

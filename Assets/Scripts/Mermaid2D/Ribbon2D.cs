@@ -6,8 +6,10 @@ using UnityEngine;
 /// with a per-length half-width curve and a start→end vertex-color gradient. Rebuilds every
 /// LateUpdate from the bone positions, so it deforms with the rig exactly like the 3D tubes.
 ///
-/// UVs: U = 0..1 across the width, V = 0..1 along the length (root → tip), so any textured
-/// material (scales, hair strands, cloth) maps naturally along the ribbon.
+/// UVs are laid out so a painted texture reads exactly as drawn ON SCREEN for this rig
+/// (parts extend right-to-left, she faces right): image X runs along the ribbon with
+/// image LEFT (u=0) = the far tip and image RIGHT (u=1) = the attachment end (first
+/// point); image Y spans the width. Paint what you see, drag the PNG in, done.
 ///
 /// Performance: triangles and UVs are static per topology — only vertices (and colors, when
 /// the gradient fields change) are re-uploaded each frame. Depth is handled purely by
@@ -136,8 +138,10 @@ public class Ribbon2D : MonoBehaviour
             }
             if (topologyDirty)
             {
-                uvsBuf[i * 2] = new Vector2(0f, t01);
-                uvsBuf[i * 2 + 1] = new Vector2(1f, t01);
+                // u runs tip(0) → attachment(1); v: +normal side is the ribbon's lower
+                // edge for right-to-left parts, so it takes the image's bottom (v=0).
+                uvsBuf[i * 2] = new Vector2(1f - t01, 0f);
+                uvsBuf[i * 2 + 1] = new Vector2(1f - t01, 1f);
             }
         }
 
@@ -201,7 +205,7 @@ public class Ribbon2D : MonoBehaviour
         int centerV = vStart;
         vertsBuf[centerV] = c;
         if (colorsDirty) colsBuf[centerV] = col;
-        uvsBuf[centerV] = new Vector2(0.5f, vCoord);
+        uvsBuf[centerV] = new Vector2(1f - vCoord, 0.5f);
 
         int prev = edgeIdx;                     // starts at +normal edge vertex
         for (int k = 1; k < cap; k++)
@@ -211,7 +215,7 @@ public class Ribbon2D : MonoBehaviour
             int idx = vStart + k;
             vertsBuf[idx] = c + dir;
             if (colorsDirty) colsBuf[idx] = col;
-            uvsBuf[idx] = new Vector2(0.5f, vCoord);
+            uvsBuf[idx] = new Vector2(1f - vCoord, 0.5f);
             trisBuf[ti++] = centerV; trisBuf[ti++] = prev; trisBuf[ti++] = idx;
             prev = idx;
         }
