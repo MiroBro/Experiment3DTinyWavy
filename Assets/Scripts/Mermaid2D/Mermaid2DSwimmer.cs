@@ -25,8 +25,16 @@ public class Mermaid2DSwimmer : MonoBehaviour
     public float faintUndulationFloor = 0.55f;
     [Tooltip("Extra world-space translation of her whole body, driven by the forager so she cruises lifted over the grass and dips down+forward to dig.")]
     public Vector2 forageBodyOffsetWorld = Vector2.zero;
-    [Tooltip("Extra downward head pitch (degrees) added on top of the swim pose, driven by the forager. The neck/torso follow with the chain's lag, so her upper body curls to look down at her hands.")]
+    [Tooltip("Extra downward head pitch (degrees) added on top of the swim pose, driven by the forager. This is the OUTER rotation: the head BONE turns, so the neck/torso curl with it.")]
     public float lookDownDeg = 0f;
+
+    /// <summary>
+    /// INNER face rotation (degrees, positive = down): rotates ONLY the face visuals inside
+    /// the head, with zero effect on the body chain. The forager splits its look-at-hands
+    /// angle between this and <see cref="lookDownDeg"/> so face focus and body curl are
+    /// independently tunable.
+    /// </summary>
+    [System.NonSerialized] public float faceLookDownDeg;
 
     [Header("Gaze")]
     [Tooltip("How much the face counter-rotates against the swim pitch so she keeps looking where she's swimming. 0 = face rides the bob fully, 1 = gaze locked level. Forage look-down is never compensated — she still looks at her hands.")]
@@ -112,7 +120,7 @@ public class Mermaid2DSwimmer : MonoBehaviour
         // part passes through untouched — rummaging still turns her face to her hands.
         if (faceGroup != null)
             faceGroup.localRotation = Quaternion.Euler(0f, 0f,
-                -(swimPitchDeg * Mathf.Clamp01(gazeStabilization) + bodyTiltDeg));
+                -(swimPitchDeg * Mathf.Clamp01(gazeStabilization) + bodyTiltDeg + faceLookDownDeg));
 
         // Forward virtual flow fades with motionScale so hair/tail/scroll settle when she stops.
         SwimVelocity = new Vector2(cruiseSpeed * m, vy);

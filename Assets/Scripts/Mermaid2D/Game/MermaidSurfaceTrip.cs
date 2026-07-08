@@ -42,7 +42,17 @@ public class MermaidSurfaceTrip : MonoBehaviour
     [Tooltip("SmoothDamp time for the boat's catch-up glide. Small = it arrives briskly.")]
     public float boatCatchUpTime = 0.7f;
 
-    enum Phase { Idle, Ascend, Surface, Descend }
+    [Header("Dive (the dolphin arc back under)")]
+    [Tooltip("How far FORWARD she travels over the crest of the dive arc.")]
+    public float diveForwardDistance = 1.8f;
+    [Tooltip("How high the arc crests above her surface position before she plunges.")]
+    public float diveArcHeight = 0.5f;
+    [Tooltip("How deep below the start the arc ends (she glides the rest of the way home underwater).")]
+    public float diveDepth = 1.6f;
+    [Tooltip("Seconds the dive arc takes, crest to splash.")]
+    public float diveArcTime = 2f;
+
+    enum Phase { Idle, Ascend, Surface, Dive, Recover }
     Phase phase = Phase.Idle;
     float phaseT;
     bool sold;
@@ -50,6 +60,8 @@ public class MermaidSurfaceTrip : MonoBehaviour
     float lookVel;
     float tiltVel;
     float motionVel;
+    float faceLookVel;
+    Vector2 diveStartOffset;
 
     // Rummage reach captured at Begin and faded out — zeroing it instantly teleported the
     // hand targets, which read as a hitch when the trip started mid-dig.
@@ -80,8 +92,14 @@ public class MermaidSurfaceTrip : MonoBehaviour
     public void RequestDive()
     {
         if (!CanDive) return;
-        phase = Phase.Descend;
+        EnterDive();
+    }
+
+    void EnterDive()
+    {
+        phase = Phase.Dive;
         phaseT = 0f;
+        diveStartOffset = offset;
     }
 
     public void Begin()
@@ -137,18 +155,49 @@ public class MermaidSurfaceTrip : MonoBehaviour
                     Drive(new Vector2(0f, surfaceOffsetY), 8f, surfaceBodyTiltDeg, surfaceMotionScale, dt);
                     if (!sold && phaseT >= sellDelay) SellToCrow();
                     if (!stayUntilDive && phaseT >= surfaceStayTime && flyingRocks.Count == 0)
-                    {
-                        phase = Phase.Descend;
-                        phaseT = 0f;
-                    }
+                        EnterDive();
                     break;
 
-                case Phase.Descend:
+                case Phase.Dive:
+                {
+                    // Dolphin arc: forward over the crest — briefly OUT of the water — then
+                    // plunging in and down. The offset follows the curve directly; her nose
+                    // (bone AND face, via the lookDown channel) follows the path tangent.
+                    float dur = Mathf.Max(0.5f, diveArcTime);
+                    float u = Mathf.Clamp01(phaseT / dur);
+                    float su = u * u * (3f - 2f * u);
+                    Vector2 target = diveStartOffset
+                        + new Vector2(diveForwardDistance * su, -diveDepth * su);
+                    target.y += diveArcHeight * Mathf.Sin(Mathf.PI * Mathf.Min(1f, u / 0.7f));
+
+                    Vector2 prev = offset;
+                    offset = target;
+                    offsetVel = (offset - prev) / Mathf.Max(0.0001f, dt);
+                    swimmer.forageBodyOffsetWorld = offset;
+                    swimmer.motionScale = Mathf.SmoothDamp(swimmer.motionScale, 1f, ref motionVel, 0.3f, Mathf.Infinity, dt);
+                    swimmer.bodyTiltDeg = Mathf.SmoothDamp(swimmer.bodyTiltDeg, 0f, ref tiltVel, 0.3f, Mathf.Infinity, dt);
+                    swimmer.faceLookDownDeg = Mathf.SmoothDamp(swimmer.faceLookDownDeg, 0f, ref faceLookVel, 0.4f, Mathf.Infinity, dt);
+
+                    // Nose along the arc: rising = up, plunging = down. She looks where she dives.
+                    if (offsetVel.magnitude > 0.05f)
+                    {
+                        float pathAngle = Mathf.Atan2(offsetVel.y, Mathf.Max(0.6f, offsetVel.x)) * Mathf.Rad2Deg;
+                        pathAngle = Mathf.Clamp(pathAngle, -65f, 40f);
+                        swimmer.lookDownDeg = Mathf.SmoothDamp(swimmer.lookDownDeg, -pathAngle, ref lookVel, 0.18f, Mathf.Infinity, dt);
+                    }
+
+                    if (u >= 1f) { phase = Phase.Recover; phaseT = 0f; }
+                    break;
+                }
+
+                case Phase.Recover:
+                    // Underwater: glide from the splash point back to the forager's cruise
+                    // pose (the momentum from the dive carries into the SmoothDamp).
                     float cruiseLift = forager != null ? forager.cruiseLift : 1.2f;
                     Drive(Vector2.up * cruiseLift, 0f, 0f, 1f, dt);
                     // Hand back to the forager only once we're essentially AT its cruise
                     // pose — a bigger tolerance here made the handoff visibly snap.
-                    if (Mathf.Abs(offset.y - cruiseLift) < 0.05f && Mathf.Abs(swimmer.bodyTiltDeg) < 3f)
+                    if ((offset - Vector2.up * cruiseLift).magnitude < 0.06f && Mathf.Abs(swimmer.bodyTiltDeg) < 3f)
                     {
                         phase = Phase.Idle;
                         if (forager != null) forager.suspended = false;
@@ -174,6 +223,7 @@ public class MermaidSurfaceTrip : MonoBehaviour
         swimmer.motionScale = Mathf.SmoothDamp(swimmer.motionScale, motion, ref motionVel, 0.4f, Mathf.Infinity, dt);
         swimmer.lookDownDeg = Mathf.SmoothDamp(swimmer.lookDownDeg, lookDownTarget, ref lookVel, 0.5f, Mathf.Infinity, dt);
         swimmer.bodyTiltDeg = Mathf.SmoothDamp(swimmer.bodyTiltDeg, tiltTarget, ref tiltVel, 0.8f, Mathf.Infinity, dt);
+        swimmer.faceLookDownDeg = Mathf.SmoothDamp(swimmer.faceLookDownDeg, 0f, ref faceLookVel, 0.5f, Mathf.Infinity, dt);
 
         // Fade any captured rummage reach out of the arm bones.
         if (reachFade > 0f && forager != null)
@@ -294,8 +344,9 @@ public class MermaidSurfaceTrip : MonoBehaviour
         float t = Time.time;
 
         // Everything re-derives from the LIVE settings each frame, so tuning surfaceY /
-        // boat offset on Bootstrap2D during play moves the whole set immediately.
-        if (swimmer != null && IsActive) boatTargetX = swimmer.transform.position.x + boatOffsetX;
+        // boat offset on Bootstrap2D during play moves the whole set immediately. The boat
+        // chases her actual head X with catch-up lag — so it visibly trails her dive lunge.
+        if (swimmer != null) boatTargetX = swimmer.transform.position.x + boatOffsetX;
         boatBasePos.y = surfaceY;
         if (sky != null) sky.position = new Vector3(sky.position.x, surfaceY + 4f, 0f);
         if (waterline != null) waterline.position = new Vector3(waterline.position.x, surfaceY, 0f);

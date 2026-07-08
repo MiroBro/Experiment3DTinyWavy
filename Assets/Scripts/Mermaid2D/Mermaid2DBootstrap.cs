@@ -237,9 +237,12 @@ public class Mermaid2DBootstrap : MonoBehaviour
     public float forageReachForward = 1.4f;
     [Tooltip("How far DOWN her hands reach into the grass while rummaging.")]
     public float forageReachDown = 1.1f;
-    [Tooltip("Clamp on how far down she rotates her face to watch her hands while digging.")]
+    [Tooltip("Clamp on how far down her gaze aims at her hands while digging (total, before the body/face split below).")]
     [Range(0f, 130f)]
     public float forageLookAtHandsMaxDeg = 95f;
+    [Tooltip("Split of the look-at-hands rotation between BODY and FACE. 0 = only her face/eyes drop to the hands (body swims undisturbed), 1 = the whole neck/body curls down. This is the knob that used to drag her whole body when raised.")]
+    [Range(0f, 1f)]
+    public float forageLookBodyShare = 0.3f;
     [Tooltip("How FOCUSED her face is on the dig: seconds of gaze smoothing. Higher = a calm, steady stare; lower = she twitchily tracks every hand stir.")]
     [Range(0.05f, 2f)]
     public float forageFaceFocusTime = 0.55f;
@@ -276,6 +279,14 @@ public class Mermaid2DBootstrap : MonoBehaviour
     public float surfaceBodyTiltDeg = 58f;
     [Tooltip("SmoothDamp time for the swim up / down. Bigger = a longer, lazier ascent.")]
     public float surfaceAscendSmoothTime = 0.9f;
+    [Tooltip("Dolphin dive: how far FORWARD she arcs when diving back under.")]
+    public float surfaceDiveForward = 1.8f;
+    [Tooltip("Dolphin dive: how high the arc crests above the surface before the plunge.")]
+    public float surfaceDiveArcHeight = 0.5f;
+    [Tooltip("Dolphin dive: how deep the plunge goes before she glides home underwater.")]
+    public float surfaceDiveDepth = 1.6f;
+    [Tooltip("Dolphin dive: seconds from leaving the surface to the splash.")]
+    public float surfaceDiveTime = 2f;
     [Tooltip("Stay at the surface until the player presses Dive. When off she dives by herself after surfaceStayTime.")]
     public bool surfaceStayUntilDive = true;
     [Tooltip("Seconds she lingers with the crow when surfaceStayUntilDive is OFF (extends until all rocks have flown).")]
@@ -1261,6 +1272,7 @@ public class Mermaid2DBootstrap : MonoBehaviour
             forager.reachForward = forageReachForward;
             forager.reachDown = forageReachDown;
             forager.lookAtHandsMaxDeg = forageLookAtHandsMaxDeg;
+            forager.lookBodyShare = forageLookBodyShare;
             forager.lookSmoothTime = forageFaceFocusTime;
             forager.wiggleAmplitude = forageWiggleAmplitude;
             forager.wiggleFrequency = forageWiggleFrequency;
@@ -1456,6 +1468,7 @@ public class Mermaid2DBootstrap : MonoBehaviour
             foragerRef.reachForward = forageReachForward;
             foragerRef.reachDown = forageReachDown;
             foragerRef.lookAtHandsMaxDeg = forageLookAtHandsMaxDeg;
+            foragerRef.lookBodyShare = forageLookBodyShare;
             foragerRef.lookSmoothTime = forageFaceFocusTime;
             foragerRef.wiggleAmplitude = forageWiggleAmplitude;
             foragerRef.wiggleFrequency = forageWiggleFrequency;

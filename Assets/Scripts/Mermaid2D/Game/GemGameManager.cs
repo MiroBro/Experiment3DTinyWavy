@@ -389,25 +389,61 @@ public class GemGameManager : MonoBehaviour
             surfaceTrip.forager = forager;
             surfaceTrip.swimmer = forager.swimmer;
         }
-        ApplySurfaceTripSettings();
+        ApplySurfaceTripSettings(true);
         surfaceTrip.Begin();
     }
 
-    // The trip object is runtime-built, so its knobs live on Bootstrap2D (serialized in the
-    // scene, under "Surface Trip"). Copied every frame so they tune live during play.
-    void ApplySurfaceTripSettings()
+    // The trip object is runtime-built, so its canonical knobs live on Bootstrap2D
+    // (serialized in the scene, under "Surface Trip"). Copied ONLY when a Bootstrap2D value
+    // actually changes — an every-frame copy silently overwrote any tweaks made directly on
+    // the runtime MermaidSurfaceTrip component, which made those edits look dead.
+    struct TripCfg
+    {
+        public float y, offX, trail, catchUp, lift, motion, tilt, ascend, stay,
+                     diveFwd, diveArc, diveDepth, diveTime;
+        public bool stayUntilDive;
+    }
+    TripCfg _lastTripCfg;
+    bool _tripCfgValid;
+
+    void ApplySurfaceTripSettings(bool force = false)
     {
         if (surfaceTrip == null || bootstrap == null) return;
-        surfaceTrip.surfaceY = bootstrap.surfaceY;
-        surfaceTrip.boatOffsetX = bootstrap.surfaceBoatOffsetX;
-        surfaceTrip.boatTrailDistance = bootstrap.surfaceBoatTrailDistance;
-        surfaceTrip.boatCatchUpTime = bootstrap.surfaceBoatCatchUpTime;
-        surfaceTrip.surfaceHeadLift = bootstrap.surfaceHeadLift;
-        surfaceTrip.surfaceMotionScale = bootstrap.surfaceMotionScale;
-        surfaceTrip.surfaceBodyTiltDeg = bootstrap.surfaceBodyTiltDeg;
-        surfaceTrip.ascendSmoothTime = bootstrap.surfaceAscendSmoothTime;
-        surfaceTrip.stayUntilDive = bootstrap.surfaceStayUntilDive;
-        surfaceTrip.surfaceStayTime = bootstrap.surfaceStayTime;
+        var cfg = new TripCfg
+        {
+            y = bootstrap.surfaceY,
+            offX = bootstrap.surfaceBoatOffsetX,
+            trail = bootstrap.surfaceBoatTrailDistance,
+            catchUp = bootstrap.surfaceBoatCatchUpTime,
+            lift = bootstrap.surfaceHeadLift,
+            motion = bootstrap.surfaceMotionScale,
+            tilt = bootstrap.surfaceBodyTiltDeg,
+            ascend = bootstrap.surfaceAscendSmoothTime,
+            stay = bootstrap.surfaceStayTime,
+            diveFwd = bootstrap.surfaceDiveForward,
+            diveArc = bootstrap.surfaceDiveArcHeight,
+            diveDepth = bootstrap.surfaceDiveDepth,
+            diveTime = bootstrap.surfaceDiveTime,
+            stayUntilDive = bootstrap.surfaceStayUntilDive,
+        };
+        if (!force && _tripCfgValid && cfg.Equals(_lastTripCfg)) return;
+        _lastTripCfg = cfg;
+        _tripCfgValid = true;
+
+        surfaceTrip.surfaceY = cfg.y;
+        surfaceTrip.boatOffsetX = cfg.offX;
+        surfaceTrip.boatTrailDistance = cfg.trail;
+        surfaceTrip.boatCatchUpTime = cfg.catchUp;
+        surfaceTrip.surfaceHeadLift = cfg.lift;
+        surfaceTrip.surfaceMotionScale = cfg.motion;
+        surfaceTrip.surfaceBodyTiltDeg = cfg.tilt;
+        surfaceTrip.ascendSmoothTime = cfg.ascend;
+        surfaceTrip.stayUntilDive = cfg.stayUntilDive;
+        surfaceTrip.surfaceStayTime = cfg.stay;
+        surfaceTrip.diveForwardDistance = cfg.diveFwd;
+        surfaceTrip.diveArcHeight = cfg.diveArc;
+        surfaceTrip.diveDepth = cfg.diveDepth;
+        surfaceTrip.diveArcTime = cfg.diveTime;
     }
 
     /// <summary>

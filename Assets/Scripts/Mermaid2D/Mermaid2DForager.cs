@@ -52,6 +52,9 @@ public class Mermaid2DForager : MonoBehaviour
     [Tooltip("Seconds of smoothing on her rummage gaze. Higher = a calm, focused stare at the dig spot; lower = she twitchily tracks every hand stir.")]
     [Range(0.05f, 2f)]
     public float lookSmoothTime = 0.55f;
+    [Tooltip("How the look-at-hands angle is split between BODY and FACE. 0 = face-only (eyes drop to the hands, body swims undisturbed), 1 = body-only (the whole neck/torso curls down, old behavior). ~0.3 = a gentle neck curl while the face does most of the looking.")]
+    [Range(0f, 1f)]
+    public float lookBodyShare = 0.3f;
     [Tooltip("Extra downward lean at the dig (on top of dropping from cruiseLift).")]
     public float bodyDip = 0.1f;
     [Tooltip("How high above her base she cruises when NOT rummaging — keeps her swimming well up over the grass. She dives down from here to dig at the roots.")]
@@ -204,7 +207,12 @@ public class Mermaid2DForager : MonoBehaviour
         }
         lookCurrentDeg = Mathf.SmoothDamp(lookCurrentDeg, targetDeg * eased, ref lookVel,
             Mathf.Max(0.05f, lookSmoothTime));
-        swimmer.lookDownDeg = lookCurrentDeg;
+
+        // Split the look between the OUTER rotation (head bone → neck/body curl) and the
+        // INNER one (face-only) so face focus is tunable without disturbing the body.
+        float share = Mathf.Clamp01(lookBodyShare);
+        swimmer.lookDownDeg = lookCurrentDeg * share;
+        swimmer.faceLookDownDeg = lookCurrentDeg * (1f - share);
     }
 
     void ApplyReach(float reachEnv)
