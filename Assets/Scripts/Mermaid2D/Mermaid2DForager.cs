@@ -43,6 +43,9 @@ public class Mermaid2DForager : MonoBehaviour
     [Tooltip("Clamp on how far down she'll rotate her face to watch her hands, in degrees.")]
     [Range(0f, 130f)]
     public float lookAtHandsMaxDeg = 95f;
+    [Tooltip("Seconds of smoothing on her rummage gaze. Higher = a calm, focused stare at the dig spot; lower = she twitchily tracks every hand stir.")]
+    [Range(0.05f, 2f)]
+    public float lookSmoothTime = 0.55f;
     [Tooltip("Extra downward lean at the dig (on top of dropping from cruiseLift).")]
     public float bodyDip = 0.1f;
     [Tooltip("How high above her base she cruises when NOT rummaging — keeps her swimming well up over the grass. She dives down from here to dig at the roots.")]
@@ -55,8 +58,8 @@ public class Mermaid2DForager : MonoBehaviour
 
     [Header("Rummage Wiggle")]
     [Tooltip("How far her hands stir/dig around the spot.")]
-    public float wiggleAmplitude = 0.14f;
-    public float wiggleFrequency = 6.5f;
+    public float wiggleAmplitude = 0.10f;
+    public float wiggleFrequency = 5f;
 
     [Header("Loot")]
     [Tooltip("Chance each find is a gem (vs a rock).")]
@@ -85,9 +88,14 @@ public class Mermaid2DForager : MonoBehaviour
     float cruiseTarget;    // randomized cruise duration
     float lookCurrentDeg;  // smoothed look-at-hands angle
     float lookVel;
+    Vector2 lastWiggleMid; // last frame's hand-stir offset, excluded from the gaze target
 
     /// <summary>True while her hands are sifting through the grass (glints can surface).</summary>
     public bool IsRummaging => phase == Phase.Rummage;
+
+    /// <summary>0 = cruising, 1 = fully in the rummage pose (eased). The bootstrap uses this
+    /// to calm the arm flow while she digs.</summary>
+    public float RummageEnvelope { get; private set; }
 
     void Start()
     {
@@ -103,6 +111,7 @@ public class Mermaid2DForager : MonoBehaviour
             phaseT = 0f;
             lookCurrentDeg = 0f;
             lookVel = 0f;
+            RummageEnvelope = 0f;
             return;
         }
 
@@ -148,11 +157,12 @@ public class Mermaid2DForager : MonoBehaviour
     {
         if (swimmer == null) return;
         float eased = Mathf.SmoothStep(0f, 1f, reachEnv);
+        RummageEnvelope = eased;
         swimmer.motionScale = Mathf.Lerp(1f, rummageMotionScale, eased);
 
-        // Aim her face at where her hands actually are (they wiggle and the arms saturate
-        // against their bend limits, so a fixed angle always misses). Heavily smoothed so
-        // the gaze tracks the dig calmly instead of jittering with the hand stir.
+        // Aim her face at the DIG SPOT (the hands' midpoint minus the stir wiggle), so her
+        // gaze rests calmly on where she's digging instead of whipping after every hand
+        // flick. lookSmoothTime rounds off what's left.
         float targetDeg = lookDownDeg;
         if (lookAtHands)
         {
@@ -162,6 +172,7 @@ public class Mermaid2DForager : MonoBehaviour
             else if (handNear != null) hands = handNear.transform.position;
             else if (handFar != null) hands = handFar.transform.position;
             else hands = swimmer.transform.position + Vector3.down;
+            hands -= (Vector3)lastWiggleMid;
 
             Vector2 toHands = hands - swimmer.transform.position;
             if (toHands.sqrMagnitude > 0.01f)
@@ -172,7 +183,8 @@ public class Mermaid2DForager : MonoBehaviour
                 targetDeg = Mathf.Clamp(-angleDeg, 0f, lookAtHandsMaxDeg);
             }
         }
-        lookCurrentDeg = Mathf.SmoothDamp(lookCurrentDeg, targetDeg * eased, ref lookVel, 0.3f);
+        lookCurrentDeg = Mathf.SmoothDamp(lookCurrentDeg, targetDeg * eased, ref lookVel,
+            Mathf.Max(0.05f, lookSmoothTime));
         swimmer.lookDownDeg = lookCurrentDeg;
     }
 
@@ -210,6 +222,7 @@ public class Mermaid2DForager : MonoBehaviour
                  + down * (Mathf.Cos(t * 1.6f) * wiggleAmplitude * 0.7f)
                  + fwd * (Mathf.Cos(t * 0.37f) * wiggleAmplitude * 0.5f);
         }
+        lastWiggleMid = (wNear + wFar) * 0.5f;
 
         if (handNear != null) handNear.reachOffsetWorld = dip + wNear;
         if (handFar != null) handFar.reachOffsetWorld = dip + wFar;

@@ -27,6 +27,15 @@ public class MermaidSurfaceTrip : MonoBehaviour
     public float surfaceStayTime = 3.4f;
     [Tooltip("Seconds after popping up before the rocks fly to the crow.")]
     public float sellDelay = 0.9f;
+    [Tooltip("How high above the waterline her head-bob centre sits — just her face out, body idling below.")]
+    public float surfaceHeadLift = 0.12f;
+    [Tooltip("How much swim undulation her (submerged) body keeps while she holds position at the surface.")]
+    [Range(0f, 1f)]
+    public float surfaceMotionScale = 0.4f;
+    [Tooltip("The boat starts this far off and rows in to meet her each trip.")]
+    public float boatTrailDistance = 2.6f;
+    [Tooltip("SmoothDamp time for the boat's catch-up glide. Small = it arrives briskly.")]
+    public float boatCatchUpTime = 0.7f;
 
     enum Phase { Idle, Ascend, Surface, Descend }
     Phase phase = Phase.Idle;
@@ -38,6 +47,7 @@ public class MermaidSurfaceTrip : MonoBehaviour
     GameObject surfaceSet;
     Transform boat;
     Vector3 boatBasePos;
+    float boatTargetX, boatXVel;
     Transform crow;
     Vector3 crowBasePos;
     float crowFlap;
@@ -68,6 +78,12 @@ public class MermaidSurfaceTrip : MonoBehaviour
         phase = Phase.Ascend;
         phaseT = 0f;
         EnsureSurfaceSet();
+
+        // The boat trails her: it starts off to the side and rows in while she ascends,
+        // arriving just after she pops up.
+        boatTargetX = swimmer.transform.position.x + boatOffsetX;
+        boatBasePos = new Vector3(boatTargetX + boatTrailDistance, surfaceY, 0f);
+        boatXVel = 0f;
     }
 
     void Update()
@@ -77,9 +93,10 @@ public class MermaidSurfaceTrip : MonoBehaviour
         {
             phaseT += dt;
 
-            // Aim the bob centre a whisker above the waterline so her face pops out and
-            // dips with every gentle bob while she chats with the crow.
-            float surfaceOffsetY = (surfaceY + 0.05f) - swimmer.BasePosition.y;
+            // Aim the head-bob centre just above the waterline: her face breaks the surface
+            // and dips with each gentle bob, while everything below the chin stays under,
+            // softly undulating in place.
+            float surfaceOffsetY = (surfaceY + surfaceHeadLift) - swimmer.BasePosition.y;
 
             switch (phase)
             {
@@ -89,7 +106,7 @@ public class MermaidSurfaceTrip : MonoBehaviour
                     break;
 
                 case Phase.Surface:
-                    Drive(new Vector2(0f, surfaceOffsetY), 10f, 0.55f, dt); // idles, eyeing the boat
+                    Drive(new Vector2(0f, surfaceOffsetY), 10f, surfaceMotionScale, dt); // treads water, eyeing the boat
                     if (!sold && phaseT >= sellDelay) SellToCrow();
                     if (phaseT >= surfaceStayTime && flyingRocks.Count == 0) { phase = Phase.Descend; phaseT = 0f; }
                     break;
@@ -223,6 +240,9 @@ public class MermaidSurfaceTrip : MonoBehaviour
     {
         if (boat == null) return;
         float t = Time.time;
+        // Catch-up glide toward its spot beside her (also drifts home after a trip).
+        boatBasePos.x = Mathf.SmoothDamp(boatBasePos.x, boatTargetX, ref boatXVel,
+            Mathf.Max(0.05f, boatCatchUpTime), Mathf.Infinity, dt);
         boat.position = boatBasePos + Vector3.up * (0.045f * Mathf.Sin(t * 1.2f));
         boat.rotation = Quaternion.Euler(0f, 0f, 2.6f * Mathf.Sin(t * 0.8f + 1f));
 

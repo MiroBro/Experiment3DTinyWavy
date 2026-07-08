@@ -232,7 +232,7 @@ public class Mermaid2DBootstrap : MonoBehaviour
     [Tooltip("Painted hand.")]
     public Texture2D handTexture;
 
-    [Header("Foraging Reach (live-editable, play mode)")]
+    [Header("Foraging / Rummage (live-editable, play mode)")]
     [Tooltip("How far FORWARD (+X, ahead of her body) her hands reach while rummaging, so she digs out in front of her face.")]
     public float forageReachForward = 1.4f;
     [Tooltip("How far DOWN her hands reach into the grass while rummaging.")]
@@ -240,6 +240,19 @@ public class Mermaid2DBootstrap : MonoBehaviour
     [Tooltip("Clamp on how far down she rotates her face to watch her hands while digging.")]
     [Range(0f, 130f)]
     public float forageLookAtHandsMaxDeg = 95f;
+    [Tooltip("How FOCUSED her face is on the dig: seconds of gaze smoothing. Higher = a calm, steady stare; lower = she twitchily tracks every hand stir.")]
+    [Range(0.05f, 2f)]
+    public float forageFaceFocusTime = 0.55f;
+    [Tooltip("How far her hands stir around the dig spot. Bigger = more digging action (and more arm motion).")]
+    public float forageWiggleAmplitude = 0.10f;
+    [Tooltip("How fast her hands stir, in stirs per second-ish.")]
+    public float forageWiggleFrequency = 5f;
+    [Tooltip("Multiplier on the ARM flow (elbow/hand floppiness) while she rummages. Lower = calmer, more controlled elbows during the dig; 1 = arms keep their full swim flow.")]
+    [Range(0.05f, 2f)]
+    public float forageArmFlowScale = 0.45f;
+    [Tooltip("How much swim undulation her BODY keeps while rummaging. 0 = almost still (a faint bob floor always remains), 1 = full swim wave.")]
+    [Range(0f, 1f)]
+    public float forageBodyMotionScale = 0.5f;
 
     [Header("Seaweed Motion (live-editable)")]
     [Tooltip("How far each blade sways side to side.")]
@@ -1215,6 +1228,10 @@ public class Mermaid2DBootstrap : MonoBehaviour
             forager.reachForward = forageReachForward;
             forager.reachDown = forageReachDown;
             forager.lookAtHandsMaxDeg = forageLookAtHandsMaxDeg;
+            forager.lookSmoothTime = forageFaceFocusTime;
+            forager.wiggleAmplitude = forageWiggleAmplitude;
+            forager.wiggleFrequency = forageWiggleFrequency;
+            forager.rummageMotionScale = forageBodyMotionScale;
             foragerRef = forager;
         }
     }
@@ -1345,6 +1362,10 @@ public class Mermaid2DBootstrap : MonoBehaviour
         float fm = Mathf.Max(0.01f, flukeFlowMultiplier);
         float hm = Mathf.Max(0.01f, hairFlowMultiplier);
         float am = Mathf.Max(0.01f, armFlowMultiplier);
+        // Rummage: stiffen the arms while she digs so the elbows read as controlled work
+        // rather than loose flopping (forageArmFlowScale, blended by the dig envelope).
+        if (foragerRef != null)
+            am *= Mathf.Lerp(1f, Mathf.Max(0.05f, forageArmFlowScale), foragerRef.RummageEnvelope);
         for (int i = 0; i < boneEntries.Count; i++)
         {
             var e = boneEntries[i];
@@ -1395,12 +1416,16 @@ public class Mermaid2DBootstrap : MonoBehaviour
         }
         UpdateHairColliderRadii();
 
-        // 5b. Live foraging reach.
+        // 5b. Live foraging / rummage tuning.
         if (foragerRef != null)
         {
             foragerRef.reachForward = forageReachForward;
             foragerRef.reachDown = forageReachDown;
             foragerRef.lookAtHandsMaxDeg = forageLookAtHandsMaxDeg;
+            foragerRef.lookSmoothTime = forageFaceFocusTime;
+            foragerRef.wiggleAmplitude = forageWiggleAmplitude;
+            foragerRef.wiggleFrequency = forageWiggleFrequency;
+            foragerRef.rummageMotionScale = forageBodyMotionScale;
         }
 
         // 6. Live seaweed motion (segments change rebuilds that bed's mesh).
