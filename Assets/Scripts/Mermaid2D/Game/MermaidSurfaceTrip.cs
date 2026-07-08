@@ -82,9 +82,7 @@ public class MermaidSurfaceTrip : MonoBehaviour
     Transform crow;
     Vector3 crowBasePos;
     float crowFlap;
-    int crowFacing = 1;         // TARGET facing: +1 = faces +X (toward a mermaid ahead), -1 = -X
-    float crowFacingVisual = 1f; // eased toward crowFacing so the bird turns in place, not snaps
-    const float CrowTurnTime = 0.32f;   // seconds to turn around on the spot
+    int crowFacing = 1;   // +1 = faces +X (toward a mermaid ahead of the boat), -1 = faces -X
 
     class FlyingRock { public Transform t; public Vector3 from, to; public float u; }
     readonly List<FlyingRock> flyingRocks = new List<FlyingRock>();
@@ -185,8 +183,11 @@ public class MermaidSurfaceTrip : MonoBehaviour
                     offset = target;
                     offsetVel = (offset - prev) / Mathf.Max(0.0001f, dt);
                     swimmer.forageBodyOffsetWorld = offset;
-                    swimmer.motionScale = Mathf.SmoothDamp(swimmer.motionScale, 1f, ref motionVel, 0.3f, Mathf.Infinity, dt);
-                    swimmer.bodyTiltDeg = Mathf.SmoothDamp(swimmer.bodyTiltDeg, 0f, ref tiltVel, 0.3f, Mathf.Infinity, dt);
+                    swimmer.motionScale = Mathf.SmoothDamp(swimmer.motionScale, 1f, ref motionVel, 0.45f, Mathf.Infinity, dt);
+                    // Straighten her nose-up surface tilt gently: a fast straighten made the
+                    // neck/torso whip around faster than the lagged spine could follow, folding
+                    // her upper body.
+                    swimmer.bodyTiltDeg = Mathf.SmoothDamp(swimmer.bodyTiltDeg, 0f, ref tiltVel, 0.55f, Mathf.Infinity, dt);
                     swimmer.faceLookDownDeg = Mathf.SmoothDamp(swimmer.faceLookDownDeg, 0f, ref faceLookVel, 0.4f, Mathf.Infinity, dt);
 
                     // Nose along the arc: rising = up, plunging = down. She looks where she dives.
@@ -202,15 +203,21 @@ public class MermaidSurfaceTrip : MonoBehaviour
                 }
 
                 case Phase.Recover:
-                    // Momentum glide out of the splash: Y settles onto the cruise line
-                    // fairly quickly, but the FORWARD offset bleeds back much more slowly —
-                    // she coasts forward into her swim instead of braking like she hit a
-                    // wall (the old single-target damp pulled her hard backwards, which
-                    // compressed the whole body like a ribbon).
+                {
+                    // She keeps the dive's FORWARD momentum and simply sheds it — speeding out
+                    // of the splash then easing to cruise — and is only ever nudged home at a
+                    // gentle capped speed. She's never pulled BACKWARD hard (facing +X while
+                    // being yanked -X is what folded her spine / "broke her back"); the world
+                    // scroll re-centres her the rest of the way.
                     float cruiseLift = forager != null ? forager.cruiseLift : 1.2f;
-                    offset.x = Mathf.SmoothDamp(offset.x, 0f, ref offsetVel.x,
-                        Mathf.Max(0.3f, diveGlideTime), Mathf.Infinity, dt);
-                    offset.y = Mathf.SmoothDamp(offset.y, cruiseLift, ref offsetVel.y, 1.1f, Mathf.Infinity, dt);
+                    float tau = Mathf.Max(0.15f, diveGlideTime * 0.5f);
+                    float forwardV = Mathf.Max(0f, offsetVel.x) * Mathf.Exp(-dt / tau);  // coast, never reverse
+                    float homePull = Mathf.Clamp(-offset.x / 0.6f, -0.5f, 0.5f);          // gentle, capped
+                    offsetVel.x = forwardV;
+                    offset.x += (forwardV + homePull) * dt;
+                    // Rise back to the cruise line gently so the vertical reversal at the
+                    // bottom of the plunge doesn't fold her either.
+                    offset.y = Mathf.SmoothDamp(offset.y, cruiseLift, ref offsetVel.y, 1.4f, Mathf.Infinity, dt);
                     swimmer.forageBodyOffsetWorld = offset;
                     DrivePose(0f, 0f, 1f, dt);
                     // Hand back to the forager once she's ROUGHLY home — its resume blend
@@ -223,6 +230,7 @@ public class MermaidSurfaceTrip : MonoBehaviour
                         if (forager != null) forager.suspended = false;
                     }
                     break;
+                }
             }
         }
         else if (swimmer != null && Mathf.Abs(swimmer.bodyTiltDeg) > 0.01f)
@@ -380,22 +388,28 @@ public class MermaidSurfaceTrip : MonoBehaviour
 
         // Boat "physics": the treadmill current drags it backward exactly like the ground
         // scroll (same motionScale remap the seaweed uses), while the crow rows it toward
-        // its spot behind her at a capped speed. Fast mermaid → the gap grows; she slows or
-        // surfaces → the current dies and the boat catches up, still sitting behind her.
+        // its spot near her at a capped speed. Fast mermaid → the gap grows; she slows or
+        // surfaces → the current dies and the boat catches up.
         if (swimmer != null)
         {
             float t01 = Mathf.Clamp01((swimmer.motionScale - 0.6f) / 0.37f);
             float ease = t01 * t01 * (3f - 2f * t01);
             boatBasePos.x -= swimmer.cruiseSpeed * waterCurrentScale * ease * dt;
         }
-        boatBasePos.x = Mathf.SmoothDamp(boatBasePos.x, boatTargetX, ref boatXVel,
+        // Rowing only ever CLOSES the gap toward her; it never rows backward to re-open the
+        // trailing distance. So if the boat catches all the way up to her while she's stopped
+        // (rummaging), it just sits there — it only falls behind again when she swims off
+        // (the current) or docks in front (surfacing). Clamp the trail target so it can't sit
+        // ahead of where the boat already is.
+        float rowTarget = docked ? boatTargetX : Mathf.Max(boatTargetX, boatBasePos.x);
+        boatBasePos.x = Mathf.SmoothDamp(boatBasePos.x, rowTarget, ref boatXVel,
             Mathf.Max(0.05f, boatCatchUpTime), Mathf.Max(0.1f, boatRowSpeed), dt);
         boat.position = boatBasePos + Vector3.up * (0.045f * Mathf.Sin(t * 1.2f));
         boat.rotation = Quaternion.Euler(0f, 0f, 2.6f * Mathf.Sin(t * 0.8f + 1f));
 
         if (crow != null)
         {
-            // The crow keeps its perch on the boat and simply TURNS IN PLACE to face the
+            // The crow keeps its perch on the boat and flips instantly in place to face the
             // mermaid when the boat crosses her side — no hopping to the other end of the boat.
             if (swimmer != null)
             {
@@ -403,19 +417,15 @@ public class MermaidSurfaceTrip : MonoBehaviour
                 if (desiredFacing != crowFacing)
                 {
                     crowFacing = desiredFacing;
-                    crowFlap = 0.35f;   // a little flap as it turns
+                    crowFlap = 0.35f;   // a little flap on the flip
                 }
             }
-
-            // Ease the visual facing across zero: the sprite squashes to edge-on and back,
-            // which reads as the bird pivoting on the spot instead of instantly mirroring.
-            crowFacingVisual = Mathf.MoveTowards(crowFacingVisual, crowFacing, dt / CrowTurnTime);
 
             crowFlap = Mathf.Max(0f, crowFlap - dt);
             float hop = crowFlap > 0f ? Mathf.Abs(Mathf.Sin(crowFlap * 22f)) * 0.06f : 0f;
             float idle = 0.008f * Mathf.Sin(t * 3.1f);
             crow.localPosition = new Vector3(crowBasePos.x, crowBasePos.y + hop + idle, 0f);
-            crow.localScale = new Vector3(crowFacingVisual,
+            crow.localScale = new Vector3(crowFacing,
                 1f + (crowFlap > 0f ? 0.14f * Mathf.Abs(Mathf.Sin(crowFlap * 22f)) : 0f), 1f);
         }
     }
