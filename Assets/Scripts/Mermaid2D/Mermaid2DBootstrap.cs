@@ -214,6 +214,22 @@ public class Mermaid2DBootstrap : MonoBehaviour
     [Tooltip("Painted hand.")]
     public Texture2D handTexture;
 
+    [Header("Seaweed Motion (live-editable)")]
+    [Tooltip("How far each blade sways side to side.")]
+    public float seaweedSwayAmplitude = 0.35f;
+    [Tooltip("How fast the blades sway, in wave cycles per second.")]
+    public float seaweedSwayFrequency = 0.8f;
+    [Tooltip("How many wave humps travel up a blade at once. Higher = more serpentine.")]
+    public float seaweedWaveCount = 1.1f;
+    [Tooltip("Small, faster secondary ripple layered on top of the main sway.")]
+    public float seaweedFlutterAmplitude = 0.10f;
+    [Tooltip("Segments per blade — more = smoother, rounder bends (rebuilds the beds on change).")]
+    [Range(2, 24)]
+    public int seaweedSegments = 12;
+    [Tooltip("How fast the grass scrolls LEFT past her while she swims, as a fraction of her cruise speed. 0 = static bed, 1 = matches her speed exactly.")]
+    [Range(0f, 2f)]
+    public float seaweedScrollScale = 0.5f;
+
     [Header("Editor Preview")]
     [Tooltip("Animate the edit-mode preview with the exact same swim + bone-lag simulation as play mode (she undulates in the Scene view without pressing Play). Costs some editor CPU while the scene is open.")]
     public bool animatePreview = true;
@@ -271,6 +287,9 @@ public class Mermaid2DBootstrap : MonoBehaviour
     readonly HashSet<Mermaid2DBone> tailBoneSet = new HashSet<Mermaid2DBone>();
     readonly HashSet<Mermaid2DBone> flukeBoneSet = new HashSet<Mermaid2DBone>();
     readonly HashSet<Mermaid2DBone> armBoneSet = new HashSet<Mermaid2DBone>();
+
+    // Seaweed runtime state (both depth layers) — kept so the motion fields tune live.
+    readonly List<Seaweed2D> seaweedLayers = new List<Seaweed2D>();
 
     // Hair runtime state.
     readonly List<GameObject> hairGameObjects = new List<GameObject>();
@@ -359,6 +378,7 @@ public class Mermaid2DBootstrap : MonoBehaviour
         tailBoneSet.Clear();
         flukeBoneSet.Clear();
         armBoneSet.Clear();
+        seaweedLayers.Clear();
         hairGameObjects.Clear();
         hairBones.Clear();
         hairBoneSet.Clear();
@@ -1127,6 +1147,13 @@ public class Mermaid2DBootstrap : MonoBehaviour
         field.bodyCircles = circles;
         field.bodyRadii = radii;
         field.swimmer = swimmer;
+        field.swayAmplitude = seaweedSwayAmplitude;
+        field.swayFrequency = seaweedSwayFrequency;
+        field.waveCount = seaweedWaveCount;
+        field.flutterAmplitude = seaweedFlutterAmplitude;
+        field.segments = Mathf.Clamp(seaweedSegments, 2, 24);
+        field.scrollScale = seaweedScrollScale;
+        seaweedLayers.Add(field);
         Material seaweedArt = RibbonArt(seaweedMaterial, seaweedTexture);
         field.useVertexTint = seaweedArt == null;
 
@@ -1275,6 +1302,20 @@ public class Mermaid2DBootstrap : MonoBehaviour
             RebuildHairColliders();
         }
         UpdateHairColliderRadii();
+
+        // 6. Live seaweed motion (segments change rebuilds that bed's mesh).
+        int swSeg = Mathf.Clamp(seaweedSegments, 2, 24);
+        for (int i = 0; i < seaweedLayers.Count; i++)
+        {
+            var sw = seaweedLayers[i];
+            if (sw == null) continue;
+            sw.swayAmplitude = seaweedSwayAmplitude;
+            sw.swayFrequency = seaweedSwayFrequency;
+            sw.waveCount = seaweedWaveCount;
+            sw.flutterAmplitude = seaweedFlutterAmplitude;
+            sw.scrollScale = seaweedScrollScale;
+            if (sw.segments != swSeg) { sw.segments = swSeg; sw.Build(); }
+        }
     }
 
     // ---------------------------------------------------------------- cosmetics API

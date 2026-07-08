@@ -26,9 +26,9 @@ public class Seaweed2D : MonoBehaviour
 
     [Header("Blade Shape")]
     public Vector2 heightRange = new Vector2(0.55f, 0.95f);
-    [Tooltip("Segments up each blade.")]
-    [Range(2, 8)]
-    public int segments = 5;
+    [Tooltip("Segments up each blade. More = smoother, rounder bends.")]
+    [Range(2, 24)]
+    public int segments = 12;
     [Tooltip("Half-width of the blade at the root / tip.")]
     public float baseHalfWidth = 0.05f;
     public float tipHalfWidth = 0.014f;
@@ -227,9 +227,12 @@ public class Seaweed2D : MonoBehaviour
             {
                 float h = (float)i / N;
                 float y = ry + height * h;
-                float xoff = Mathf.Sin(phase + time * swayOmega + h * waveCount * 2f * Mathf.PI)
+                // NOTE the minus on the h terms: crests then satisfy time*omega - h*k = const,
+                // so as time advances the crest height h INCREASES — the wave visibly
+                // travels root -> tip (up the blade), like real current-driven grass.
+                float xoff = Mathf.Sin(phase + time * swayOmega - h * waveCount * 2f * Mathf.PI)
                              * swayAmplitude * amp * Mathf.Pow(h, 1.3f)
-                           + Mathf.Sin(phase * 2f + time * swayOmega * 2.7f + h * 7f)
+                           + Mathf.Sin(phase * 2f + time * swayOmega * 2.7f - h * 7f)
                              * flutterAmplitude * h * h;
                 float cx = rx + xoff;
 
