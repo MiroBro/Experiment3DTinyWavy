@@ -55,6 +55,21 @@ public class Mermaid2DBootstrap : MonoBehaviour
     [Range(0f, 180f)] public float handMaxBendAngleDeg = 31.9f;
     [Range(0f, 180f)] public float elbowMaxBendAngleDeg = 97.2f;
 
+    [Header("Neck (elegant articulated neck; length/links rebuild the preview)")]
+    [Tooltip("Distance from the chest to the head — her neck length. The edit-mode preview rebuilds on change; for play mode set it before pressing Play.")]
+    public float neckLength = 0.55f;
+    [Tooltip("How many lagged links articulate the neck. More = softer, more serpentine undulation; 0 = the old rigid connection.")]
+    [Range(0, 6)]
+    public int neckLinkCount = 3;
+    [Tooltip("Bend limit per neck link, in degrees. Lower = a poised, swan-like neck that rights itself behind the head; higher = loose and noodly.")]
+    [Range(0f, 180f)]
+    public float neckMaxBendDeg = 28f;
+    [Tooltip("Neck half-width along its length. X = 0 under the skull, 1 where it meets the chest. Edits apply live.")]
+    public AnimationCurve neckWidthCurve = new AnimationCurve(
+        new Keyframe(0f, 0.105f, 0f, -0.10f),
+        new Keyframe(0.40f, 0.075f, 0f, 0f),
+        new Keyframe(1f, 0.165f, 0.30f, 0.30f));
+
     [Header("Body Structure (live-editable)")]
     [Tooltip("Bend limit between spine links (head→neck→torso→hip), in degrees. This is her 'core strength': lower = the body rights itself quickly behind the head instead of trailing like a ribbon. 0 = no limit (pure lag).")]
     [Range(0f, 180f)]
@@ -279,6 +294,7 @@ public class Mermaid2DBootstrap : MonoBehaviour
     Mermaid2DBoneChain chain;
     Mermaid2DBone elbowNear, elbowFar, handNear, handFar;
     readonly List<Mermaid2DBone> spineBones = new List<Mermaid2DBone>();
+    readonly List<Mermaid2DBone> neckLinkBones = new List<Mermaid2DBone>();
 
     // Tail/fluke runtime state — tracked separately so we can rebuild on the fly.
     readonly List<GameObject> tailGameObjects = new List<GameObject>();
@@ -371,6 +387,7 @@ public class Mermaid2DBootstrap : MonoBehaviour
     void ClearBuildState()
     {
         spineBones.Clear();
+        neckLinkBones.Clear();
         boneEntries.Clear();
         tailGameObjects.Clear();
         tailFlukeBones.Clear();
@@ -582,10 +599,12 @@ public class Mermaid2DBootstrap : MonoBehaviour
         root = groupGO.transform;
         chain = groupGO.AddComponent<Mermaid2DBoneChain>();
 
-        // Head = the driver. She faces +X.
+        // Head = the driver. She faces +X, held away from the chest by her neck length.
+        const float chestX = 0.50f;
+        float headX = chestX + Mathf.Max(0.1f, neckLength);
         var headGO = new GameObject("Head");
         headGO.transform.SetParent(root, false);
-        headGO.transform.localPosition = new Vector3(0.85f, 0f, 0f);
+        headGO.transform.localPosition = new Vector3(headX, 0f, 0f);
         swimmer = headGO.AddComponent<Mermaid2DSwimmer>();
         swimmer.porpoiseAmplitude = porpoiseAmplitude;
         swimmer.porpoiseFrequency = porpoiseFrequency;
@@ -593,7 +612,28 @@ public class Mermaid2DBootstrap : MonoBehaviour
         driver = headGO.transform;
         chain.driver = driver;
 
-        var neckBone = MakeBone("Neck", new Vector2(0.50f, 0f), driver, neckSmoothTime);
+        // Articulated neck: a short chain of lagged links between the skull and the chest,
+        // so the neck undulates with the same traveling-wave lag as the rest of her. The
+        // head's bob enters at the skull and rolls down the links into the body.
+        var neckPoints = new List<Transform> { driver };
+        Transform neckAnchor = driver;
+        int links = Mathf.Clamp(neckLinkCount, 0, 6);
+        for (int i = 1; i <= links; i++)
+        {
+            float t = i / (float)(links + 1);
+            // Quick right under the skull, easing toward the chest's lag.
+            float st = Mathf.Lerp(0.06f, neckSmoothTime, t);
+            var link = MakeBone($"NeckLink{i:D2}", new Vector2(Mathf.Lerp(headX, chestX, t), 0f), neckAnchor, st);
+            var linkMB = link.GetComponent<Mermaid2DBone>();
+            linkMB.maxBendAngleDeg = neckMaxBendDeg;
+            neckLinkBones.Add(linkMB);
+            neckPoints.Add(link);
+            neckAnchor = link;
+        }
+
+        // "Neck" is the neck BASE / chest bone (necklace, arms and hair colliders hang here).
+        var neckBone = MakeBone("Neck", new Vector2(chestX, 0f), neckAnchor, neckSmoothTime);
+        neckPoints.Add(neckBone);
         var torsoBone = MakeBone("Torso", new Vector2(0.05f, 0f), neckBone, torsoSmoothTime);
         var hipBone = MakeBone("Hip", new Vector2(-0.55f, 0f), torsoBone, hipSmoothTime);
         hipPoint = hipBone;
@@ -654,14 +694,25 @@ public class Mermaid2DBootstrap : MonoBehaviour
         // Spine + arm bones capture their rest poses from the built layout.
         chain.Initialize();
 
-        // Torso ribbon: head → neck → torso → hip, feminine profile, skin blending to gold
-        // at the hip where the tail begins.
+        // Neck ribbon: slim skin-colored band lofted through the skull, the neck links and
+        // the chest. Always procedural skin (a torso texture would map wrongly onto it).
+        Color neckCol = skinColor; neckCol.a = 1f;
+        var neckRibbon = MakeRibbon("NeckRibbon", neckPoints.ToArray(), neckWidthCurve, 1f,
+            20, neckCol, neckCol, OrderTorso, null);
+        neckRibbon.roundCaps = true;
+
+        // Torso ribbon: chest → torso → hip, feminine profile, skin blending to gold at the
+        // hip where the tail begins. The neck used to be the first 1/3 of this ribbon's
+        // point-span (head→neck→torso→hip), so the body keeps its exact tuned silhouette by
+        // sampling the saved width curve over its old [1/3, 1] section.
         Material torsoArt = RibbonArt(torsoMaterial, torsoTexture);
         Color torsoStart = torsoArt != null ? Color.white : skinColor;
         Color torsoEnd = torsoArt != null ? Color.white : Color.Lerp(hipColor, goldColor, 0.45f);
+        torsoStart.a = 1f;
         torsoEnd.a = 1f;
-        MakeRibbon("TorsoRibbon", new[] { driver, neckBone, torsoBone, hipBone },
-            torsoWidthCurve, 1f, 26, torsoStart, torsoEnd, OrderTorso, torsoArt);
+        var torsoRibbon = MakeRibbon("TorsoRibbon", new[] { neckBone, torsoBone, hipBone },
+            RemapCurveSection(torsoWidthCurve, 1f / 3f, 1f), 1f, 26, torsoStart, torsoEnd, OrderTorso, torsoArt);
+        torsoRibbon.roundCaps = true;   // the chest cap doubles as her shoulder silhouette
 
         BuildTail(hipBone);
         Transform tailTip = (tailBonesOrdered.Count > 0)
@@ -984,6 +1035,12 @@ public class Mermaid2DBootstrap : MonoBehaviour
         var radii = new List<float>();
 
         if (hairAvoidsHead && driver != null) { transforms.Add(driver); radii.Add(0.32f); }
+        for (int i = 0; i < neckLinkBones.Count; i++)
+        {
+            if (neckLinkBones[i] == null) continue;
+            transforms.Add(neckLinkBones[i].transform);
+            radii.Add(0.10f);
+        }
         var neck = root != null ? root.Find("Neck") : null;
         if (neck != null) { transforms.Add(neck); radii.Add(0.18f); }
         var torso = root != null ? root.Find("Torso") : null;
@@ -1282,7 +1339,9 @@ public class Mermaid2DBootstrap : MonoBehaviour
         if (elbowNear != null) elbowNear.maxBendAngleDeg = elbowMaxBendAngleDeg;
         if (elbowFar != null) elbowFar.maxBendAngleDeg = elbowMaxBendAngleDeg;
 
-        // 3b. Live body structure (spine core strength + tail/fluke wave limits).
+        // 3b. Live body structure (neck poise + spine core strength + tail/fluke wave limits).
+        for (int i = 0; i < neckLinkBones.Count; i++)
+            if (neckLinkBones[i] != null) neckLinkBones[i].maxBendAngleDeg = neckMaxBendDeg;
         for (int i = 0; i < spineBones.Count; i++)
             if (spineBones[i] != null) spineBones[i].maxBendAngleDeg = spineMaxBendDeg;
         for (int i = 0; i < tailBonesOrdered.Count; i++)
@@ -1532,6 +1591,21 @@ public class Mermaid2DBootstrap : MonoBehaviour
     static Material SpriteMat(Color c)
     {
         return new Material(Shader.Find("Sprites/Default")) { color = c };
+    }
+
+    // A new curve equal to src over [from, to], renormalized to [0, 1]. Densely sampled with
+    // smoothed tangents so the reshaped section keeps the original silhouette.
+    static AnimationCurve RemapCurveSection(AnimationCurve src, float from, float to, int samples = 20)
+    {
+        var keys = new Keyframe[samples];
+        for (int i = 0; i < samples; i++)
+        {
+            float t = i / (samples - 1f);
+            keys[i] = new Keyframe(t, src.Evaluate(Mathf.Lerp(from, to, t)));
+        }
+        var c = new AnimationCurve(keys);
+        for (int i = 0; i < samples; i++) c.SmoothTangents(i, 0f);
+        return c;
     }
 
     // Effective ribbon override: explicit material wins, else wrap a painted texture.
