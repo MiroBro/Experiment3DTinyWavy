@@ -6,9 +6,14 @@ using UnityEngine;
 /// with a per-length half-width curve and a start→end vertex-color gradient. Rebuilds every
 /// LateUpdate from the bone positions, so it deforms with the rig exactly like the 3D tubes.
 ///
-/// Rendered with an unlit vertex-color shader (Sprites/Default); depth is handled purely by
+/// UVs: U = 0..1 across the width, V = 0..1 along the length (root → tip), so any textured
+/// material (scales, hair strands, cloth) maps naturally along the ribbon.
+///
+/// Performance: triangles and UVs are static per topology — only vertices (and colors, when
+/// the gradient fields change) are re-uploaded each frame. Depth is handled purely by
 /// MeshRenderer.sortingOrder.
 /// </summary>
+[ExecuteAlways]
 [RequireComponent(typeof(MeshFilter), typeof(MeshRenderer))]
 [DefaultExecutionOrder(60)]
 public class Ribbon2D : MonoBehaviour
@@ -22,7 +27,9 @@ public class Ribbon2D : MonoBehaviour
     [Tooltip("Centerline sample count. More = smoother bends.")]
     [Range(2, 96)]
     public int samples = 24;
+    [Tooltip("Vertex tint at the first point. Multiplies the material/texture. White = untinted art.")]
     public Color colorStart = Color.white;
+    [Tooltip("Vertex tint at the last point. Multiplies the material/texture. White = untinted art.")]
     public Color colorEnd = Color.white;
     [Tooltip("Add semicircular caps at both ends so the ribbon doesn't end in a hard chop.")]
     public bool roundCaps = true;
@@ -33,13 +40,24 @@ public class Ribbon2D : MonoBehaviour
     Vector3[] center;
     Vector3[] vertsBuf;
     Color[] colsBuf;
+    Vector2[] uvsBuf;
     int[] trisBuf;
+    bool topologyDirty;
+    Color lastColorStart, lastColorEnd;
 
     void Awake()
     {
+        EnsureMesh();
+    }
+
+    // Also recovers after editor domain reloads (non-serialized mesh field goes null).
+    void EnsureMesh()
+    {
+        if (mesh != null) return;
         mesh = new Mesh { name = "Ribbon2D" };
         mesh.MarkDynamic();
         GetComponent<MeshFilter>().sharedMesh = mesh;
+        vertsBuf = null;   // force a full topology rebuild into the fresh mesh
     }
 
     static Vector3 CatmullRom(Vector3 p0, Vector3 p1, Vector3 p2, Vector3 p3, float t)
@@ -52,6 +70,7 @@ public class Ribbon2D : MonoBehaviour
 
     void LateUpdate()
     {
+        EnsureMesh();
         if (points == null || points.Length < 2 || mesh == null) return;
         Build();
     }
@@ -78,15 +97,19 @@ public class Ribbon2D : MonoBehaviour
         }
 
         int cap = roundCaps ? Mathf.Max(2, capSegments) : 0;
-        int capVerts = roundCaps ? 2 * (cap - 1) + 2 : 0;   // fan points + 2 fan centers
+        int capVerts = roundCaps ? 2 * cap : 0;   // (cap-1 fan points + 1 fan center) per end
         int totalV = N * 2 + capVerts;
         int totalT = ((N - 1) * 2 + (roundCaps ? 2 * cap : 0)) * 3;
         if (vertsBuf == null || vertsBuf.Length != totalV)
         {
             vertsBuf = new Vector3[totalV];
             colsBuf = new Color[totalV];
+            uvsBuf = new Vector2[totalV];
             trisBuf = new int[totalT];
+            topologyDirty = true;
         }
+
+        bool colorsDirty = topologyDirty || colorStart != lastColorStart || colorEnd != lastColorEnd;
 
         // 2) Two verts per sample, offset along the in-plane normal.
         Vector3 lastGoodTangent = Vector3.right;
@@ -102,41 +125,72 @@ public class Ribbon2D : MonoBehaviour
             Vector3 normal = new Vector3(-tan.y, tan.x, 0f);
             float t01 = (float)i / (N - 1);
             float halfW = Mathf.Max(0.0005f, widthCurve.Evaluate(t01) * widthScale);
-            Color col = Color.Lerp(colorStart, colorEnd, t01);
 
             vertsBuf[i * 2] = center[i] + normal * halfW;
             vertsBuf[i * 2 + 1] = center[i] - normal * halfW;
-            colsBuf[i * 2] = col;
-            colsBuf[i * 2 + 1] = col;
+            if (colorsDirty)
+            {
+                Color col = Color.Lerp(colorStart, colorEnd, t01);
+                colsBuf[i * 2] = col;
+                colsBuf[i * 2 + 1] = col;
+            }
+            if (topologyDirty)
+            {
+                uvsBuf[i * 2] = new Vector2(0f, t01);
+                uvsBuf[i * 2 + 1] = new Vector2(1f, t01);
+            }
         }
 
-        int ti = 0;
-        for (int i = 0; i < N - 1; i++)
+        if (topologyDirty)
         {
-            int r0 = i * 2, r1 = (i + 1) * 2;
-            trisBuf[ti++] = r0; trisBuf[ti++] = r1; trisBuf[ti++] = r0 + 1;
-            trisBuf[ti++] = r0 + 1; trisBuf[ti++] = r1; trisBuf[ti++] = r1 + 1;
+            int ti0 = 0;
+            for (int i = 0; i < N - 1; i++)
+            {
+                int r0 = i * 2, r1 = (i + 1) * 2;
+                trisBuf[ti0++] = r0; trisBuf[ti0++] = r1; trisBuf[ti0++] = r0 + 1;
+                trisBuf[ti0++] = r0 + 1; trisBuf[ti0++] = r1; trisBuf[ti0++] = r1 + 1;
+            }
+            // Cap triangle indices are laid out by BuildCap below (their layout is also
+            // static per topology, but the vertex positions they reference move each frame).
         }
 
         // 3) Semicircular end caps: fan from +normal through -tangent (start) / +tangent
-        //    (end) to -normal.
+        //    (end) to -normal. Vertex positions update every frame; indices/uvs are stable.
         if (roundCaps)
         {
+            int ti = (N - 1) * 6;
             int v = N * 2;
-            ti = BuildCap(v, 0, center[0], (center[0] - center[1]), widthCurve.Evaluate(0f) * widthScale, colsBuf[0], cap, ti);
-            v += (cap - 1) + 1;
-            ti = BuildCap(v, (N - 1) * 2, center[N - 1], (center[N - 1] - center[N - 2]), widthCurve.Evaluate(1f) * widthScale, colsBuf[(N - 1) * 2], cap, ti);
+            ti = BuildCap(v, 0, center[0], center[0] - center[1],
+                widthCurve.Evaluate(0f) * widthScale, Color.Lerp(colorStart, colorEnd, 0f), 0f, cap, ti, colorsDirty);
+            v += cap;
+            BuildCap(v, (N - 1) * 2, center[N - 1], center[N - 1] - center[N - 2],
+                widthCurve.Evaluate(1f) * widthScale, Color.Lerp(colorStart, colorEnd, 1f), 1f, cap, ti, colorsDirty);
         }
 
-        mesh.Clear();
-        mesh.vertices = vertsBuf;
-        mesh.colors = colsBuf;
-        mesh.triangles = trisBuf;
+        // 4) Upload. Full re-upload only when topology changed; otherwise just positions
+        //    (and colors when the gradient fields were edited).
+        if (topologyDirty)
+        {
+            mesh.Clear();
+            mesh.vertices = vertsBuf;
+            mesh.uv = uvsBuf;
+            mesh.colors = colsBuf;
+            mesh.triangles = trisBuf;
+            topologyDirty = false;
+        }
+        else
+        {
+            mesh.vertices = vertsBuf;
+            if (colorsDirty) mesh.colors = colsBuf;
+        }
+        lastColorStart = colorStart;
+        lastColorEnd = colorEnd;
         mesh.RecalculateBounds();
     }
 
     // Fan of `cap` triangles bulging in `outDir` between edge verts (edgeIdx, edgeIdx+1).
-    int BuildCap(int vStart, int edgeIdx, Vector3 c, Vector3 outDir, float halfW, Color col, int cap, int ti)
+    int BuildCap(int vStart, int edgeIdx, Vector3 c, Vector3 outDir, float halfW, Color col,
+        float vCoord, int cap, int ti, bool colorsDirty)
     {
         halfW = Mathf.Max(0.0005f, halfW);
         if (outDir.sqrMagnitude < 1e-10f) outDir = Vector3.left;
@@ -146,7 +200,8 @@ public class Ribbon2D : MonoBehaviour
 
         int centerV = vStart;
         vertsBuf[centerV] = c;
-        colsBuf[centerV] = col;
+        if (colorsDirty) colsBuf[centerV] = col;
+        uvsBuf[centerV] = new Vector2(0.5f, vCoord);
 
         int prev = edgeIdx;                     // starts at +normal edge vertex
         for (int k = 1; k < cap; k++)
@@ -155,7 +210,8 @@ public class Ribbon2D : MonoBehaviour
             Vector3 dir = n * Mathf.Cos(ang) + outDir * (halfW * Mathf.Sin(ang));
             int idx = vStart + k;
             vertsBuf[idx] = c + dir;
-            colsBuf[idx] = col;
+            if (colorsDirty) colsBuf[idx] = col;
+            uvsBuf[idx] = new Vector2(0.5f, vCoord);
             trisBuf[ti++] = centerV; trisBuf[ti++] = prev; trisBuf[ti++] = idx;
             prev = idx;
         }

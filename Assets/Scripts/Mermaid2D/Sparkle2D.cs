@@ -14,6 +14,7 @@ public class Sparkle2D : MonoBehaviour
     Vector3 baseScale;
     float spinSpeedDeg;
     Material mat;
+    [System.NonSerialized] public SpriteRenderer spriteRend; // custom-sprite path: fade via sprite color
 
     public void Initialize(Vector2 worldVelocity, float lifetime, float despawnDistance, Material fadeMat)
     {
@@ -38,7 +39,13 @@ public class Sparkle2D : MonoBehaviour
         float pulse = 1f + Mathf.Sin(Time.time * 12f) * 0.12f;
         float fade = (aliveFrac < 0.7f) ? 1f : Mathf.Lerp(1f, 0f, (aliveFrac - 0.7f) / 0.3f);
         transform.localScale = baseScale * pulse * Mathf.Max(0.001f, fade);
-        if (mat != null)
+        if (spriteRend != null)
+        {
+            var c = spriteRend.color;
+            c.a = fade;
+            spriteRend.color = c;
+        }
+        else if (mat != null)
         {
             var c = mat.color;
             c.a = fade;

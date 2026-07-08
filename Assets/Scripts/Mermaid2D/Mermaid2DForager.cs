@@ -59,11 +59,22 @@ public class Mermaid2DForager : MonoBehaviour
     public float gemChance = 0.55f;
     public Color gemColor = new Color(0.5f, 0.85f, 1f);
     public Color rockColor = new Color(0.6f, 0.58f, 0.52f);
+    [Tooltip("Optional: your own gem sprite. When set, the procedural diamond polygon (and its color tint) is not used.")]
+    public Sprite gemSprite;
+    [Tooltip("Optional: your own rock sprite. When set, the procedural blob (and its color tint) is not used.")]
+    public Sprite rockSprite;
+
+    /// <summary>When set (by GemGameManager), finds are rolled by the meta-game instead of
+    /// the simple gem/rock split above.</summary>
+    [System.NonSerialized] public GemGameManager gameManager;
 
     enum Phase { Cruise, ReachIn, Rummage, ReachOut }
     Phase phase = Phase.Cruise;
     float phaseT;          // seconds elapsed in the current phase
     float cruiseTarget;    // randomized cruise duration
+
+    /// <summary>True while her hands are sifting through the grass (glints can surface).</summary>
+    public bool IsRummaging => phase == Phase.Rummage;
 
     void Start()
     {
@@ -176,9 +187,16 @@ public class Mermaid2DForager : MonoBehaviour
         spot += Vector3.down * 0.12f;
         spot.z = 0f;
 
+        // Meta-game mode: the manager decides what she found (items, quality, buffs, xp).
+        if (gameManager != null)
+        {
+            gameManager.OnForageFind(spot, handForFollow);
+            return;
+        }
+
         bool isGem = Random.value < gemChance;
         Color c = isGem ? gemColor : rockColor;
-        CollectedItem2D.Spawn(spot, handForFollow, isGem, c);
+        CollectedItem2D.Spawn(spot, handForFollow, isGem, c, isGem ? gemSprite : rockSprite);
 
         if (inventory != null)
         {

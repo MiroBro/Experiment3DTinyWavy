@@ -5,9 +5,9 @@ using UnityEngine;
 /// when the mermaid finds it — scales up, drifts up toward her hand, spins, then fades and
 /// self-destroys. Purely visual; the inventory count is incremented by the forager at spawn.
 ///
-/// Gems are faceted diamond polygons with a bright glint gradient; rocks are lumpy blobs.
+/// Gems are faceted diamond polygons with a bright glint gradient; rocks are lumpy blobs —
+/// or, if a custom sprite is passed in, that sprite (untinted, so your art shows as-drawn).
 /// </summary>
-[RequireComponent(typeof(MeshFilter), typeof(MeshRenderer))]
 public class CollectedItem2D : MonoBehaviour
 {
     public const int SortingOrder = 12;
@@ -17,29 +17,44 @@ public class CollectedItem2D : MonoBehaviour
     Vector3 baseScale;
     float life, maxLife;
     float spinDeg;
-    Material mat;
+    Material mat;            // procedural-mesh path: fade via material alpha
+    SpriteRenderer spriteRend; // custom-sprite path: fade via sprite color alpha
 
-    public static CollectedItem2D Spawn(Vector3 worldPos, Transform followTarget, bool isGem, Color color)
+    public static CollectedItem2D Spawn(Vector3 worldPos, Transform followTarget, bool isGem,
+        Color color, Sprite customSprite = null)
     {
         var go = new GameObject(isGem ? "Gem2D" : "Rock2D");
         worldPos.z = 0f;
         go.transform.position = worldPos;
 
-        var mf = go.AddComponent<MeshFilter>();
-        var mr = go.AddComponent<MeshRenderer>();
-        mf.sharedMesh = isGem ? BuildGemMesh(color) : BuildRockMesh(color);
-
-        var mat = new Material(Shader.Find("Sprites/Default")) { color = Color.white };
-        mr.sharedMaterial = mat;
-        mr.sortingOrder = SortingOrder;
-        mr.shadowCastingMode = UnityEngine.Rendering.ShadowCastingMode.Off;
-        mr.receiveShadows = false;
-
         var item = go.AddComponent<CollectedItem2D>();
-        item.mat = mat;
+
+        if (customSprite != null)
+        {
+            var sr = go.AddComponent<SpriteRenderer>();
+            sr.sprite = customSprite;
+            sr.sortingOrder = SortingOrder;
+            item.spriteRend = sr;
+            // Auto-fit the sprite to the same world height the procedural shapes use.
+            float targetH = isGem ? 0.38f : 0.28f;
+            float s = targetH / Mathf.Max(0.0001f, customSprite.bounds.size.y);
+            item.baseScale = new Vector3(s, s, 1f);
+        }
+        else
+        {
+            var mf = go.AddComponent<MeshFilter>();
+            var mr = go.AddComponent<MeshRenderer>();
+            mf.sharedMesh = isGem ? BuildGemMesh(color) : BuildRockMesh(color);
+            item.mat = new Material(Shader.Find("Sprites/Default")) { color = Color.white };
+            mr.sharedMaterial = item.mat;
+            mr.sortingOrder = SortingOrder;
+            mr.shadowCastingMode = UnityEngine.Rendering.ShadowCastingMode.Off;
+            mr.receiveShadows = false;
+            item.baseScale = isGem ? new Vector3(0.14f, 0.20f, 1f) : new Vector3(0.17f, 0.14f, 1f);
+        }
+
         item.follow = followTarget;
         item.startPos = worldPos;
-        item.baseScale = isGem ? new Vector3(0.14f, 0.20f, 1f) : new Vector3(0.17f, 0.14f, 1f);
         go.transform.localScale = item.baseScale;
         go.transform.rotation = Quaternion.Euler(0f, 0f, Random.Range(-25f, 25f));
         item.maxLife = 1.1f;
@@ -134,7 +149,13 @@ public class CollectedItem2D : MonoBehaviour
         float popIn = Mathf.Clamp01(aliveFrac / 0.18f);
         float fadeOut = (aliveFrac < 0.7f) ? 1f : Mathf.Lerp(1f, 0f, (aliveFrac - 0.7f) / 0.3f);
         transform.localScale = baseScale * (0.2f + 0.8f * popIn) * Mathf.Max(0.001f, fadeOut);
-        if (mat != null)
+        if (spriteRend != null)
+        {
+            var sc = spriteRend.color;
+            sc.a = fadeOut;
+            spriteRend.color = sc;
+        }
+        else if (mat != null)
         {
             var mc = mat.color;
             mc.a = fadeOut;

@@ -31,6 +31,16 @@ public class Underwater2DAtmosphere : MonoBehaviour
     public Color seabedColor = new Color(0.16f, 0.14f, 0.10f);
     public Color sandLineColor = new Color(0.45f, 0.38f, 0.24f);
 
+    [Header("Custom Art (optional — set on Bootstrap2D, copied here at spawn)")]
+    [Tooltip("Your own background image. Replaces the procedural deep→horizon gradient (drawn untinted, stretched to fill the view).")]
+    public Sprite backdropSprite;
+    [Tooltip("Your own ground/sand image. Replaces the procedural seabed strip + sand line.")]
+    public Sprite seabedSprite;
+    [Tooltip("Your own plankton/particle sprite. Replaces the procedural soft diamonds; moteColor still tints it.")]
+    public Sprite moteSprite;
+    [Tooltip("Your own god-ray material (e.g. an additive shader or a textured ray). The vertex-gradient quad geometry is kept.")]
+    public Material godRayMaterial;
+
     class Mote
     {
         public Transform t;
@@ -47,13 +57,33 @@ public class Underwater2DAtmosphere : MonoBehaviour
 
     readonly List<Mote> motes = new List<Mote>();
     readonly List<GodRay> rays = new List<GodRay>();
+    readonly List<GameObject> spawned = new List<GameObject>();
     Camera cam;
+    bool built;
     const float MoteHalfW = 8f;
 
     void Start()
     {
+        if (!built) Build();
+    }
+
+    /// <summary>Build (or fully rebuild) every atmosphere piece from the current colors.
+    /// Called again by the meta-game when she travels to a new location.</summary>
+    public void Build()
+    {
+        for (int i = 0; i < spawned.Count; i++)
+        {
+            if (spawned[i] == null) continue;
+            if (Application.isPlaying) Destroy(spawned[i]);
+            else DestroyImmediate(spawned[i]);
+        }
+        spawned.Clear();
+        motes.Clear();
+        rays.Clear();
+        built = true;
+
         cam = Camera.main;
-        if (cam != null)
+        if (cam != null && Application.isPlaying)
         {
             cam.clearFlags = CameraClearFlags.SolidColor;
             cam.backgroundColor = deepColor;
@@ -64,6 +94,9 @@ public class Underwater2DAtmosphere : MonoBehaviour
         BuildGodRays();
         BuildMotes();
     }
+
+    /// <summary>Alias used by the meta-game when the location palette changes.</summary>
+    public void Rebuild() => Build();
 
     static Material SpriteMat(Color tint)
     {
@@ -99,27 +132,65 @@ public class Underwater2DAtmosphere : MonoBehaviour
         return m;
     }
 
+    static SpriteRenderer MakeSpriteGO(string name, Transform parent, Sprite sprite,
+        Vector2 fitSize, Color tint, int sortingOrder)
+    {
+        var go = new GameObject(name);
+        go.transform.SetParent(parent, false);
+        var sr = go.AddComponent<SpriteRenderer>();
+        sr.sprite = sprite;
+        sr.color = tint;
+        sr.sortingOrder = sortingOrder;
+        Vector2 b = sprite.bounds.size;
+        go.transform.localScale = new Vector3(
+            fitSize.x / Mathf.Max(0.0001f, b.x),
+            fitSize.y / Mathf.Max(0.0001f, b.y), 1f);
+        return sr;
+    }
+
     void BuildBackdrop()
     {
-        // Parented to the camera so it never moves on screen. Big enough for any zoom the
-        // follow camera allows.
+        // Parented to the camera so it never moves on screen (in edit-mode preview it is
+        // parented here instead, placed at the camera's position). Big enough for any zoom.
+        Transform parent = (Application.isPlaying && cam != null) ? cam.transform : transform;
+        Vector3 pos = new Vector3(0f, 0f, 20f);
+        if (!Application.isPlaying && cam != null) pos += cam.transform.position;
+
+        if (backdropSprite != null)
+        {
+            var sr = MakeSpriteGO("Backdrop", parent, backdropSprite, new Vector2(60f, 30f), Color.white, -100);
+            sr.transform.localPosition = pos;
+            spawned.Add(sr.gameObject);
+            return;
+        }
         var mesh = GradientQuad(60f, 30f, deepColor, deepColor, horizonColor, horizonColor);
-        Transform parent = (cam != null) ? cam.transform : transform;
         var mr = MakeMeshGO("Backdrop", parent, mesh, -100, Color.white);
-        mr.transform.localPosition = new Vector3(0f, 0f, 20f);
+        mr.transform.localPosition = pos;
+        spawned.Add(mr.gameObject);
     }
 
     void BuildSeabed()
     {
+        if (seabedSprite != null)
+        {
+            // Custom ground art: top edge sits at seabedY, drawn instead of strip + line.
+            var sr = MakeSpriteGO("Seabed", transform, seabedSprite, new Vector2(70f, 6f), Color.white, -60);
+            sr.transform.position = new Vector3(0f, seabedY - 3f, 0f);
+            spawned.Add(sr.gameObject);
+            return;
+        }
+
         Color deepBed = seabedColor * 0.55f; deepBed.a = 1f;
         var bed = GradientQuad(70f, 6f, deepBed, deepBed, seabedColor, seabedColor);
         var mrBed = MakeMeshGO("Seabed", transform, bed, -60, Color.white);
         mrBed.transform.position = new Vector3(0f, seabedY - 3f, 0f);
+        spawned.Add(mrBed.gameObject);
 
         Color lineLo = sandLineColor * 0.7f; lineLo.a = 1f;
         var line = GradientQuad(70f, 0.09f, lineLo, lineLo, sandLineColor, sandLineColor);
         var mrLine = MakeMeshGO("SandLine", transform, line, -59, Color.white);
         mrLine.transform.position = new Vector3(0f, seabedY + 0.045f, 0f);
+        spawned.Add(mrLine.gameObject);
     }
 
     void BuildGodRays()
@@ -133,6 +204,9 @@ public class Underwater2DAtmosphere : MonoBehaviour
             Color bot = godRayColor; bot.a = 0f;
             var mesh = GradientQuad(width, 9f, bot, bot, top, top);
             var mr = MakeMeshGO($"GodRay{i:D2}", transform, mesh, -90, Color.white);
+            spawned.Add(mr.gameObject);
+            if (godRayMaterial != null)
+                mr.sharedMaterial = new Material(godRayMaterial);   // per-ray copy: alpha animates independently
             float x = Mathf.Lerp(-6.5f, 6.5f, (godRayCount > 1) ? (float)i / (godRayCount - 1) : 0.5f)
                       + Random.Range(-0.8f, 0.8f);
             mr.transform.position = new Vector3(x, 2.6f, 0f);
@@ -178,15 +252,28 @@ public class Underwater2DAtmosphere : MonoBehaviour
             bool front = (i % 3 == 0);   // a third of the motes float in front of her
             var go = new GameObject($"Mote{i:D3}");
             go.transform.SetParent(transform, false);
-            go.AddComponent<MeshFilter>().sharedMesh = moteMesh;
-            var mr = go.AddComponent<MeshRenderer>();
-            mr.sharedMaterial = sharedMat;
-            mr.sortingOrder = front ? 30 : -85;
-            mr.shadowCastingMode = UnityEngine.Rendering.ShadowCastingMode.Off;
-            mr.receiveShadows = false;
-
+            spawned.Add(go);
             float size = Random.Range(0.015f, 0.05f) * (front ? 1.6f : 1f);
-            go.transform.localScale = new Vector3(size, size, 1f);
+
+            if (moteSprite != null)
+            {
+                var sr = go.AddComponent<SpriteRenderer>();
+                sr.sprite = moteSprite;
+                sr.color = moteColor;
+                sr.sortingOrder = front ? 30 : -85;
+                float s = (size * 2f) / Mathf.Max(0.0001f, moteSprite.bounds.size.y);
+                go.transform.localScale = new Vector3(s, s, 1f);
+            }
+            else
+            {
+                go.AddComponent<MeshFilter>().sharedMesh = moteMesh;
+                var mr = go.AddComponent<MeshRenderer>();
+                mr.sharedMaterial = sharedMat;
+                mr.sortingOrder = front ? 30 : -85;
+                mr.shadowCastingMode = UnityEngine.Rendering.ShadowCastingMode.Off;
+                mr.receiveShadows = false;
+                go.transform.localScale = new Vector3(size, size, 1f);
+            }
             float y = Random.Range(seabedY + 0.2f, 4.5f);
             go.transform.position = new Vector3(Random.Range(-MoteHalfW, MoteHalfW), y, 0f);
 

@@ -9,6 +9,7 @@ using UnityEngine;
 ///
 /// Spawn two layers (one sorted behind the mermaid, one in front) for depth.
 /// </summary>
+[ExecuteAlways]
 [RequireComponent(typeof(MeshFilter), typeof(MeshRenderer))]
 public class Seaweed2D : MonoBehaviour
 {
@@ -45,6 +46,8 @@ public class Seaweed2D : MonoBehaviour
     public Color colorB = new Color(0.22f, 0.62f, 0.34f);
     [Tooltip("Layer tint: <1 = darker (back layer), >1 = brighter (front layer).")]
     public float brightness = 1f;
+    [Tooltip("ON = shade blades with the green colorA/colorB gradient (procedural look). OFF = grayscale shading only, so a custom textured material shows its own colors (root darkening and layer brightness still apply).")]
+    public bool useVertexTint = true;
 
     [Header("Treadmill Scroll")]
     [Tooltip("How fast the grass scrolls past her (to fake swimming forward) relative to her swim speed. 0 = static bed.")]
@@ -91,6 +94,7 @@ public class Seaweed2D : MonoBehaviour
 
         verts = new Vector3[count * vpb];
         var cols = new Color[count * vpb];
+        var uvs = new Vector2[count * vpb];
         var tris = new int[count * N * 6];
 
         int t = 0;
@@ -103,7 +107,8 @@ public class Seaweed2D : MonoBehaviour
             bladeAmp[b] = Random.Range(0.8f, 1.2f);
             bladeWidthMul[b] = Random.Range(0.8f, 1.2f);
 
-            Color shade = Color.Lerp(colorA, colorB, Random.value) * brightness;
+            Color tint = useVertexTint ? Color.Lerp(colorA, colorB, Random.value) : Color.white;
+            Color shade = tint * brightness;
             shade.a = 1f;
 
             int baseIdx = b * vpb;
@@ -114,6 +119,9 @@ public class Seaweed2D : MonoBehaviour
                 c.a = 1f;
                 cols[baseIdx + i * 2] = c;
                 cols[baseIdx + i * 2 + 1] = c;
+                // UVs: U across the blade, V up the blade — a blade texture maps naturally.
+                uvs[baseIdx + i * 2] = new Vector2(0f, h);
+                uvs[baseIdx + i * 2 + 1] = new Vector2(1f, h);
             }
 
             for (int i = 0; i < N; i++)
@@ -141,6 +149,7 @@ public class Seaweed2D : MonoBehaviour
         UpdateVertices();
         mesh.vertices = verts;
         mesh.colors = cols;
+        mesh.uv = uvs;
         mesh.triangles = tris;
         // Static generous bounds so scroll/sway never frustum-culls the bed.
         mesh.bounds = new Bounds(
@@ -155,6 +164,8 @@ public class Seaweed2D : MonoBehaviour
 
     void Update()
     {
+        // Recover after editor domain reloads (non-serialized buffers go null).
+        if (mesh == null || verts == null) Build();
         if (mesh == null || verts == null) return;
 
         // Treadmill scroll: full speed while cruising, eases to 0 while she rummages.

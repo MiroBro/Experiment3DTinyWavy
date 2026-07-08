@@ -11,7 +11,14 @@ using System.Collections.Generic;
 /// Defaults are the hand-tuned values from the 3D scene (long 24-segment tail, big flowing
 /// flukes, thick ribbon hair locks, globalSmooth 0.37), converted from Z-forward to
 /// X-forward. No twirl in 2D.
+///
+/// EDIT-MODE PREVIEW: in the editor (before Play) this builds the whole world — mermaid at
+/// rest pose, seaweed, atmosphere — under a temporary "__Mermaid2DPreview" root that is
+/// never saved into the scene. Edit any field on this component and the preview rebuilds.
+/// The preview is a mirror of the runtime build, so tune the look here (colors, curves,
+/// custom art slots) and Play will match.
 /// </summary>
+[ExecuteAlways]
 [DefaultExecutionOrder(-100)]
 public class Mermaid2DBootstrap : MonoBehaviour
 {
@@ -128,9 +135,53 @@ public class Mermaid2DBootstrap : MonoBehaviour
     public AnimationCurve armWidthCurve = new AnimationCurve(
         new Keyframe(0f, 0.10f), new Keyframe(0.5f, 0.07f), new Keyframe(1f, 0.05f));
 
+    // ---------------------------------------------------------------- custom art
+    // Everything below is optional. Leave a slot empty to keep the procedural look.
+    // RULE OF THUMB: parts that DEFORM (torso, tail, flukes, arms, hair, seaweed) take a
+    // MATERIAL — their ribbon meshes have UVs (U across, V along root→tip), so a material
+    // with your texture flows with the animation. Parts that are RIGID (head, hands, gems,
+    // rocks, sparkles, motes, backdrop, ground) take a SPRITE, auto-fitted to the same size
+    // as the procedural shape they replace. When a material override is set, the ribbon's
+    // vertex tint is forced to white so your art shows untinted.
+    [Header("Custom Art — deforming parts (materials)")]
+    [Tooltip("Torso ribbon material (UVs: V=0 head → V=1 hip).")]
+    public Material torsoMaterial;
+    [Tooltip("Tail ribbon material (UVs: V=0 hip → V=1 tip). E.g. a scales texture.")]
+    public Material tailMaterial;
+    [Tooltip("Fluke lobe material (UVs: V=0 tail tip → V=1 fin tip).")]
+    public Material flukeMaterial;
+    [Tooltip("Arm ribbon material (UVs: V=0 shoulder → V=1 wrist). Used by both arms; the far arm is still darkened for depth.")]
+    public Material armMaterial;
+    [Tooltip("Hair lock material (UVs: V=0 scalp → V=1 tip). Per-lock color variation is disabled when set.")]
+    public Material hairMaterial;
+    [Tooltip("Seaweed blade material for BOTH layers (UVs: V=0 root → V=1 tip). Green vertex tint is disabled when set; root darkening is kept.")]
+    public Material seaweedMaterial;
+
+    [Header("Custom Art — rigid parts (sprites)")]
+    [Tooltip("Head sprite (side view, facing right). Replaces the head disc AND the procedural face (eye/brow/lips) — draw those into your sprite.")]
+    public Sprite headSprite;
+    [Tooltip("Hand sprite. Used for both hands; the far hand is automatically darkened.")]
+    public Sprite handSprite;
+    [Tooltip("Gem sprite (untinted).")]
+    public Sprite gemSprite;
+    [Tooltip("Rock sprite (untinted).")]
+    public Sprite rockSprite;
+    [Tooltip("Sparkle sprite (tinted by the spawner's sparkleColor).")]
+    public Sprite sparkleSprite;
+    [Tooltip("Background image (replaces the deep→horizon gradient).")]
+    public Sprite backdropSprite;
+    [Tooltip("Ground/sand image (replaces the seabed strip + sand line; its top edge sits at the seabed height).")]
+    public Sprite seabedSprite;
+    [Tooltip("Drifting plankton mote sprite (tinted by moteColor).")]
+    public Sprite moteSprite;
+    [Tooltip("God-ray material override (e.g. additive). Needs a _Color tint property for the shimmer.")]
+    public Material godRayMaterial;
+
     [Header("Extras")]
     [Tooltip("Gold crown, necklace and armbands.")]
     public bool goldJewelry = true;
+    [Tooltip("Soft billowing hair mass behind the head that the locks flow out of.")]
+    public bool hairVolumeBlob = true;
     [Tooltip("Spawn the two-layer flowing seaweed bed that parts around her body and hands.")]
     public bool spawnSeaweed = true;
     [Tooltip("Make her periodically pause and rummage in the grass for gems/rocks.")]
@@ -139,6 +190,22 @@ public class Mermaid2DBootstrap : MonoBehaviour
     public bool spawnAtmosphere = true;
     [Tooltip("Golden sparkles drifting from her trailing hand.")]
     public bool spawnSparkles = true;
+
+    [Header("Corner Widget Mode")]
+    [Tooltip("Render the whole game inside a round viewport anchored to a screen corner (for a corner-of-screen widget game). The area outside the circle is filled with widgetSurroundColor — set its alpha to 0 for transparent-desktop-overlay builds.")]
+    public bool cornerWidget = false;
+    public CornerWidget2D.Corner widgetCorner = CornerWidget2D.Corner.BottomRight;
+    [Tooltip("Circle diameter as a fraction of the smaller screen dimension.")]
+    [Range(0.15f, 1f)]
+    public float widgetScreenFraction = 0.55f;
+    [Tooltip("What fills the screen outside the circle. Alpha 0 = ready for a transparent overlay window build.")]
+    public Color widgetSurroundColor = new Color(0f, 0f, 0f, 0f);
+    [Tooltip("Resolution of the square texture the game is rendered into. Smaller = big GPU savings for a corner widget (512–768 looks crisp at typical widget sizes).")]
+    public int widgetRenderSize = 768;
+
+    [Header("Performance")]
+    [Tooltip("0 = uncapped (vsync). For a corner-widget/desktop-pet build, 30 keeps CPU+GPU usage tiny while the motion still reads smoothly.")]
+    public int capFrameRate = 0;
 
     [Header("Anchors (populated at runtime)")]
     public Transform root;
@@ -204,13 +271,162 @@ public class Mermaid2DBootstrap : MonoBehaviour
 
     void Awake()
     {
+        if (!Application.isPlaying)
+        {
+#if UNITY_EDITOR
+            SchedulePreviewRebuild();
+#endif
+            return;
+        }
+        DestroyPreview();      // a DontSave preview can survive into play mode
+        ClearBuildState();
+        ApplyFrameCap();
         BuildMermaid();
         WireCamera();
         EnsureForagingAndSeaweed();
         EnsureAtmosphere();
         EnsureSparkles();
+        EnsureCornerWidget();
         SnapshotShapeValues();
         _lastHairAvoidsHead = hairAvoidsHead;
+    }
+
+    // ---------------------------------------------------------------- edit-mode preview
+
+    const string PreviewRootName = "__Mermaid2DPreview (not saved)";
+
+    void ClearBuildState()
+    {
+        boneEntries.Clear();
+        tailGameObjects.Clear();
+        tailFlukeBones.Clear();
+        tailBonesOrdered.Clear();
+        tailBoneSet.Clear();
+        flukeBoneSet.Clear();
+        armBoneSet.Clear();
+        hairGameObjects.Clear();
+        hairBones.Clear();
+        hairBoneSet.Clear();
+        hairRibbons.Clear();
+        _hairColliderTransforms = null;
+        _hairColliderRadii = null;
+        _hairColliderBaseRadii = null;
+        _hairColliderTailStartIdx = -1;
+        root = null; driver = null; headScalp = null; hipPoint = null;
+        swimmer = null; chain = null;
+        elbowNear = elbowFar = handNear = handFar = null;
+    }
+
+    void DestroyPreview()
+    {
+        for (var existing = GameObject.Find(PreviewRootName); existing != null;
+             existing = GameObject.Find(PreviewRootName))
+        {
+            if (Application.isPlaying) { Destroy(existing); break; }
+            DestroyImmediate(existing);
+        }
+    }
+
+#if UNITY_EDITOR
+    bool _previewQueued;
+
+    void OnEnable()
+    {
+        if (!Application.isPlaying) SchedulePreviewRebuild();
+    }
+
+    void OnValidate()
+    {
+        if (!Application.isPlaying) SchedulePreviewRebuild();
+    }
+
+    void SchedulePreviewRebuild()
+    {
+        if (_previewQueued) return;
+        _previewQueued = true;
+        UnityEditor.EditorApplication.delayCall += () =>
+        {
+            _previewQueued = false;
+            if (this == null || Application.isPlaying) return;
+            RebuildPreview();
+        };
+    }
+
+    [ContextMenu("Rebuild Edit-Mode Preview")]
+    public void RebuildPreview()
+    {
+        DestroyPreview();
+        BuildPreview();
+    }
+
+    void BuildPreview()
+    {
+        ClearBuildState();
+        var prev = new GameObject(PreviewRootName);
+        prev.hideFlags = HideFlags.DontSave;
+
+        // The mermaid at her rest pose (chains don't simulate in edit mode). Lifted by the
+        // forager's cruise height so she previews where she actually swims.
+        BuildMermaid();
+        if (root != null)
+        {
+            root.SetParent(prev.transform, true);
+            root.position += Vector3.up * 1.2f;
+        }
+
+        if (spawnSeaweed)
+        {
+            var back = MakeSeaweedLayer("SeaweedBack", 170, -1.02f, 0.72f, -50, 1234, null, null);
+            var front = MakeSeaweedLayer("SeaweedFront", 110, -1.18f, 1.08f, 20, 4321, null, null);
+            back.transform.SetParent(prev.transform, true);
+            front.transform.SetParent(prev.transform, true);
+            back.GetComponent<Seaweed2D>().Build();
+            front.GetComponent<Seaweed2D>().Build();
+        }
+
+        if (spawnAtmosphere)
+        {
+            var atmoGO = new GameObject("PreviewAtmosphere");
+            atmoGO.transform.SetParent(prev.transform, false);
+            var atmo = atmoGO.AddComponent<Underwater2DAtmosphere>();
+            atmo.backdropSprite = backdropSprite;
+            atmo.seabedSprite = seabedSprite;
+            atmo.moteSprite = moteSprite;
+            atmo.godRayMaterial = godRayMaterial;
+            atmo.Build();
+        }
+    }
+#endif
+
+    int _lastAppliedFrameCap = -1;
+
+    void ApplyFrameCap()
+    {
+        if (capFrameRate == _lastAppliedFrameCap) return;
+        _lastAppliedFrameCap = capFrameRate;
+        if (capFrameRate > 0)
+        {
+            QualitySettings.vSyncCount = 0;
+            Application.targetFrameRate = capFrameRate;
+        }
+        else
+        {
+            QualitySettings.vSyncCount = 1;
+            Application.targetFrameRate = -1;
+        }
+    }
+
+    void EnsureCornerWidget()
+    {
+        if (!cornerWidget) return;
+        if (FindAnyObjectByType<CornerWidget2D>() != null) return;
+        var go = new GameObject("CornerWidget2D");
+        var w = go.AddComponent<CornerWidget2D>();
+        w.corner = widgetCorner;
+        w.screenFraction = widgetScreenFraction;
+        w.surroundColor = widgetSurroundColor;
+        w.renderTextureSize = Mathf.Clamp(widgetRenderSize, 128, 2048);
+        w.ringColor = goldColor;
     }
 
     // ---------------------------------------------------------------- build: mermaid
@@ -258,13 +474,24 @@ public class Mermaid2DBootstrap : MonoBehaviour
             if (near) { elbowNear = elbowMB; handNear = handMB; }
             else { elbowFar = elbowMB; handFar = handMB; }
 
-            Color armCol = near ? skinColor : skinColor * 0.68f;
+            // With a custom arm material the tint is white (near) / gray (far) so the
+            // texture shows as drawn but the far arm still recedes.
+            Color armCol;
+            if (armMaterial != null) armCol = near ? Color.white : new Color(0.68f, 0.68f, 0.68f, 1f);
+            else armCol = near ? skinColor : skinColor * 0.68f;
             armCol.a = 1f;
             var armRibbon = MakeRibbon("ArmRibbon" + sfx, new[] { shoulder, elbow, hand },
-                armWidthCurve, 1f, 14, armCol, armCol, near ? OrderNearArm : OrderFarArm);
+                armWidthCurve, 1f, 14, armCol, armCol, near ? OrderNearArm : OrderFarArm, armMaterial);
             armRibbon.roundCaps = true;
 
-            MakeDisc("HandDisc" + sfx, hand, Vector2.zero, 0.085f, armCol, near ? OrderNearHand : OrderFarHand);
+            if (handSprite != null)
+                MakeSpriteFit("HandSprite" + sfx, hand, Vector2.zero, handSprite, 0.17f,
+                    near ? Color.white : new Color(0.68f, 0.68f, 0.68f, 1f),
+                    near ? OrderNearHand : OrderFarHand);
+            else
+                MakeDisc("HandDisc" + sfx, hand, Vector2.zero, 0.085f,
+                    armMaterial != null ? (near ? skinColor : skinColor * 0.68f) : armCol,
+                    near ? OrderNearHand : OrderFarHand);
 
             if (goldJewelry && near)
                 MakeQuad("Armband", elbow, new Vector2(0.10f, 0.02f), new Vector2(0.15f, 0.05f), 25f, goldColor, OrderNearArm + 1);
@@ -275,9 +502,11 @@ public class Mermaid2DBootstrap : MonoBehaviour
 
         // Torso ribbon: head → neck → torso → hip, feminine profile, skin blending to gold
         // at the hip where the tail begins.
-        Color torsoEnd = Color.Lerp(hipColor, goldColor, 0.45f); torsoEnd.a = 1f;
+        Color torsoStart = torsoMaterial != null ? Color.white : skinColor;
+        Color torsoEnd = torsoMaterial != null ? Color.white : Color.Lerp(hipColor, goldColor, 0.45f);
+        torsoEnd.a = 1f;
         MakeRibbon("TorsoRibbon", new[] { driver, neckBone, torsoBone, hipBone },
-            torsoWidthCurve, 1f, 26, skinColor, torsoEnd, OrderTorso);
+            torsoWidthCurve, 1f, 26, torsoStart, torsoEnd, OrderTorso, torsoMaterial);
 
         BuildTail(hipBone);
         Transform tailTip = (tailBonesOrdered.Count > 0)
@@ -317,7 +546,9 @@ public class Mermaid2DBootstrap : MonoBehaviour
         }
 
         var ribbon = MakeRibbon("TailRibbon", tubePoints, tailWidthCurve, 1f, 52,
-            goldColor, goldDeepColor, OrderTail);
+            tailMaterial != null ? Color.white : goldColor,
+            tailMaterial != null ? Color.white : goldDeepColor,
+            OrderTail, tailMaterial);
         tailGameObjects.Add(ribbon.gameObject);
     }
 
@@ -356,19 +587,22 @@ public class Mermaid2DBootstrap : MonoBehaviour
 
             Color flukeTipCol = Color.Lerp(goldDeepColor, hairShadowColor, 0.3f); flukeTipCol.a = 1f;
             var ribbon = MakeRibbon($"FlukeRibbon{suffix}", tubePoints, flukeWidthCurve, 1f, 34,
-                goldDeepColor, flukeTipCol, OrderFluke);
+                flukeMaterial != null ? Color.white : goldDeepColor,
+                flukeMaterial != null ? Color.white : flukeTipCol,
+                OrderFluke, flukeMaterial);
             tailGameObjects.Add(ribbon.gameObject);
         }
     }
 
     void BuildHead(Transform headBone)
     {
-        MakeDisc("HeadDisc", headBone, Vector2.zero, 0.30f, skinColor, OrderHead);
-
         // Soft hair mass at the back/top of the head that the long strands flow out of.
-        var blob = MakeDisc("HairVolume", headBone, new Vector2(-0.16f, 0.13f), 0.34f, hairColor, OrderHairBlob);
-        blob.transform.localScale = new Vector3(0.40f, 0.32f, 1f);   // squashed bean
-        blob.AddComponent<GentleBillow2D>();
+        if (hairVolumeBlob)
+        {
+            var blob = MakeDisc("HairVolume", headBone, new Vector2(-0.16f, 0.13f), 0.34f, hairColor, OrderHairBlob);
+            blob.transform.localScale = new Vector3(0.40f, 0.32f, 1f);   // squashed bean
+            blob.AddComponent<GentleBillow2D>();
+        }
 
         // Scalp anchor the hair bones hang from (live-editable via hairRootOffset).
         var scalpGO = new GameObject("ScalpAnchor");
@@ -376,18 +610,28 @@ public class Mermaid2DBootstrap : MonoBehaviour
         scalpGO.transform.localPosition = (Vector3)hairRootOffset;
         headScalp = scalpGO.transform;
 
-        // Face: tilted almond eye + brow + a hint of lips (side view shows one of each).
-        var eyeCol = new Color(0.05f, 0.025f, 0.02f);
-        var eye = MakeDisc("Eye", headBone, new Vector2(0.16f, 0.04f), 1f, eyeCol, OrderFace);
-        eye.transform.localScale = new Vector3(0.058f, 0.028f, 1f);
-        eye.transform.localRotation = Quaternion.Euler(0f, 0f, 8f);
+        if (headSprite != null)
+        {
+            // Custom head art (face included in the sprite) — skip the procedural features.
+            MakeSpriteFit("HeadSprite", headBone, Vector2.zero, headSprite, 0.62f, Color.white, OrderHead);
+        }
+        else
+        {
+            MakeDisc("HeadDisc", headBone, Vector2.zero, 0.30f, skinColor, OrderHead);
 
-        MakeQuad("Brow", headBone, new Vector2(0.165f, 0.135f), new Vector2(0.13f, 0.024f), 10f,
-            new Color(0.12f, 0.05f, 0.04f), OrderFace);
+            // Face: tilted almond eye + brow + a hint of lips (side view shows one of each).
+            var eyeCol = new Color(0.05f, 0.025f, 0.02f);
+            var eye = MakeDisc("Eye", headBone, new Vector2(0.16f, 0.04f), 1f, eyeCol, OrderFace);
+            eye.transform.localScale = new Vector3(0.058f, 0.028f, 1f);
+            eye.transform.localRotation = Quaternion.Euler(0f, 0f, 8f);
 
-        var lips = MakeDisc("Lips", headBone, new Vector2(0.275f, -0.075f), 1f,
-            new Color(0.62f, 0.22f, 0.16f), OrderFace);
-        lips.transform.localScale = new Vector3(0.035f, 0.02f, 1f);
+            MakeQuad("Brow", headBone, new Vector2(0.165f, 0.135f), new Vector2(0.13f, 0.024f), 10f,
+                new Color(0.12f, 0.05f, 0.04f), OrderFace);
+
+            var lips = MakeDisc("Lips", headBone, new Vector2(0.275f, -0.075f), 1f,
+                new Color(0.62f, 0.22f, 0.16f), OrderFace);
+            lips.transform.localScale = new Vector3(0.035f, 0.02f, 1f);
+        }
 
         if (goldJewelry)
         {
@@ -521,12 +765,21 @@ public class Mermaid2DBootstrap : MonoBehaviour
             bool frontLock = (s % 5 == 2);
             int order = frontLock ? OrderFrontLock : (-12 + (s % 6));
 
-            Color start = Color.Lerp(hairColor, Color.Lerp(hairColor, goldColor, 0.25f), Random.value * 0.5f);
-            start.a = 1f;
-            Color end = Color.Lerp(hairColor, hairShadowColor, 0.55f); end.a = 1f;
+            Color start, end;
+            if (hairMaterial != null)
+            {
+                start = Color.white;
+                end = Color.white;
+            }
+            else
+            {
+                start = Color.Lerp(hairColor, Color.Lerp(hairColor, goldColor, 0.25f), Random.value * 0.5f);
+                end = Color.Lerp(hairColor, hairShadowColor, 0.55f);
+            }
+            start.a = 1f; end.a = 1f;
 
             var ribbon = MakeRibbon($"HairRibbon{s:D2}", tubePoints, hairWidthCurve, hairWidthScale,
-                44, start, end, order);
+                44, start, end, order, hairMaterial);
             hairRibbons.Add(ribbon);
             hairGameObjects.Add(ribbon.gameObject);
         }
@@ -665,8 +918,9 @@ public class Mermaid2DBootstrap : MonoBehaviour
     void EnsureForagingAndSeaweed()
     {
         GemInventory inventory = null;
-        if (enableForaging)
+        if (enableForaging && FindAnyObjectByType<GemGameManager>() == null)
         {
+            // Legacy counter panel — only when the meta-game isn't in the scene.
             inventory = FindAnyObjectByType<GemInventory>();
             if (inventory == null)
                 inventory = new GameObject("GemInventory").AddComponent<GemInventory>();
@@ -705,14 +959,18 @@ public class Mermaid2DBootstrap : MonoBehaviour
             forager.elbowNear = elbowNear;
             forager.elbowFar = elbowFar;
             forager.inventory = inventory;
+            forager.gemSprite = gemSprite;
+            forager.rockSprite = rockSprite;
         }
     }
 
-    void MakeSeaweedLayer(string name, int count, float rootY, float brightness, int order,
+    GameObject MakeSeaweedLayer(string name, int count, float rootY, float brightness, int order,
         int seed, Transform[] circles, float[] radii)
     {
         var go = new GameObject(name);
-        go.transform.position = new Vector3(spawnPosition.x, 0f, 0f);
+        // Blade vertices are computed in world coordinates (patchCenterX included), so the
+        // mesh object itself must sit at the origin.
+        go.transform.position = Vector3.zero;
         var field = go.AddComponent<Seaweed2D>();
         field.patchCenterX = spawnPosition.x;
         field.rootY = rootY;
@@ -723,17 +981,23 @@ public class Mermaid2DBootstrap : MonoBehaviour
         field.bodyCircles = circles;
         field.bodyRadii = radii;
         field.swimmer = swimmer;
+        field.useVertexTint = seaweedMaterial == null;
 
         var mr = go.GetComponent<MeshRenderer>();
-        mr.sharedMaterial = SpriteMat(Color.white);
+        mr.sharedMaterial = seaweedMaterial != null ? seaweedMaterial : SpriteMat(Color.white);
         mr.sortingOrder = order;
+        return go;
     }
 
     void EnsureAtmosphere()
     {
         if (!spawnAtmosphere) return;
         if (FindAnyObjectByType<Underwater2DAtmosphere>() != null) return;
-        new GameObject("Underwater2DAtmosphere").AddComponent<Underwater2DAtmosphere>();
+        var atmo = new GameObject("Underwater2DAtmosphere").AddComponent<Underwater2DAtmosphere>();
+        atmo.backdropSprite = backdropSprite;
+        atmo.seabedSprite = seabedSprite;
+        atmo.moteSprite = moteSprite;
+        atmo.godRayMaterial = godRayMaterial;
     }
 
     void EnsureSparkles()
@@ -744,6 +1008,7 @@ public class Mermaid2DBootstrap : MonoBehaviour
         var spawner = go.AddComponent<Sparkle2DSpawner>();
         spawner.handTransform = (handNear != null) ? handNear.transform : null;
         spawner.swimmer = swimmer;
+        spawner.sparkleSprite = sparkleSprite;
     }
 
     // ---------------------------------------------------------------- live editing
@@ -788,6 +1053,9 @@ public class Mermaid2DBootstrap : MonoBehaviour
 
     void Update()
     {
+        // Edit mode: the preview rebuilds via OnValidate; none of the live-tick logic runs.
+        if (!Application.isPlaying) return;
+
         // 1. Live smoothTime updates with per-group flow multipliers.
         float gm = Mathf.Max(0f, globalSmoothMultiplier);
         float tm = Mathf.Max(0.01f, tailFlowMultiplier);
@@ -837,6 +1105,76 @@ public class Mermaid2DBootstrap : MonoBehaviour
             RebuildHairColliders();
         }
         UpdateHairColliderRadii();
+
+        // 7. Live frame cap changes.
+        ApplyFrameCap();
+    }
+
+    // ---------------------------------------------------------------- cosmetics API
+
+    /// <summary>
+    /// Re-color hair and tail at runtime (used by the meta-game's cosmetics). Hair is
+    /// rebuilt with the new color; tail/fluke ribbons and the hair blob re-tint in place.
+    /// </summary>
+    public void ApplyCosmeticPalette(Color newHair, Color newHairShadow, Color newGold, Color newGoldDeep)
+    {
+        hairColor = newHair;
+        hairShadowColor = newHairShadow;
+        goldColor = newGold;
+        goldDeepColor = newGoldDeep;
+
+        if (Application.isPlaying && root != null)
+        {
+            RebuildHair();
+
+            var tail = root.Find("TailRibbon");
+            if (tail != null && tailMaterial == null)
+            {
+                var rib = tail.GetComponent<Ribbon2D>();
+                if (rib != null) { rib.colorStart = goldColor; rib.colorEnd = goldDeepColor; }
+            }
+            foreach (var lobeName in new[] { "FlukeRibbonUp", "FlukeRibbonDown" })
+            {
+                var lobe = root.Find(lobeName);
+                if (lobe != null && flukeMaterial == null)
+                {
+                    var rib = lobe.GetComponent<Ribbon2D>();
+                    if (rib != null)
+                    {
+                        rib.colorStart = goldDeepColor;
+                        Color tip = Color.Lerp(goldDeepColor, hairShadowColor, 0.3f); tip.a = 1f;
+                        rib.colorEnd = tip;
+                    }
+                }
+            }
+            var blob = FindDeep(root, "HairVolume");
+            if (blob != null)
+            {
+                var mr = blob.GetComponent<MeshRenderer>();
+                if (mr != null && mr.material != null) mr.material.color = hairColor;
+            }
+            var torso = root.Find("TorsoRibbon");
+            if (torso != null && torsoMaterial == null)
+            {
+                var rib = torso.GetComponent<Ribbon2D>();
+                if (rib != null)
+                {
+                    Color torsoEnd = Color.Lerp(hipColor, goldColor, 0.45f); torsoEnd.a = 1f;
+                    rib.colorEnd = torsoEnd;
+                }
+            }
+        }
+    }
+
+    static Transform FindDeep(Transform t, string name)
+    {
+        if (t.name == name) return t;
+        for (int i = 0; i < t.childCount; i++)
+        {
+            var r = FindDeep(t.GetChild(i), name);
+            if (r != null) return r;
+        }
+        return null;
     }
 
     // ---------------------------------------------------------------- factory helpers
@@ -870,8 +1208,10 @@ public class Mermaid2DBootstrap : MonoBehaviour
         return go.transform;
     }
 
+    // When overrideMat is set the caller decides the vertex tints (usually white so the
+    // artist's texture shows untinted).
     Ribbon2D MakeRibbon(string name, Transform[] points, AnimationCurve widthCurve, float widthScale,
-        int samples, Color colorStart, Color colorEnd, int sortingOrder)
+        int samples, Color colorStart, Color colorEnd, int sortingOrder, Material overrideMat = null)
     {
         var go = new GameObject(name);
         go.transform.SetParent(root, false);
@@ -883,11 +1223,28 @@ public class Mermaid2DBootstrap : MonoBehaviour
         ribbon.colorStart = colorStart;
         ribbon.colorEnd = colorEnd;
         var mr = go.GetComponent<MeshRenderer>();
-        mr.sharedMaterial = SpriteMat(Color.white);
+        mr.sharedMaterial = overrideMat != null ? overrideMat : SpriteMat(Color.white);
         mr.sortingOrder = sortingOrder;
         mr.shadowCastingMode = UnityEngine.Rendering.ShadowCastingMode.Off;
         mr.receiveShadows = false;
         return ribbon;
+    }
+
+    // SpriteRenderer for a rigid part, uniformly scaled so the sprite's height matches
+    // targetHeight in world units.
+    GameObject MakeSpriteFit(string name, Transform parent, Vector2 localPos, Sprite sprite,
+        float targetHeight, Color tint, int sortingOrder)
+    {
+        var go = new GameObject(name);
+        go.transform.SetParent(parent, false);
+        go.transform.localPosition = (Vector3)localPos;
+        var sr = go.AddComponent<SpriteRenderer>();
+        sr.sprite = sprite;
+        sr.color = tint;
+        sr.sortingOrder = sortingOrder;
+        float s = targetHeight / Mathf.Max(0.0001f, sprite.bounds.size.y);
+        go.transform.localScale = new Vector3(s, s, 1f);
+        return go;
     }
 
     GameObject MakeDisc(string name, Transform parent, Vector2 localPos, float radius, Color color, int sortingOrder)

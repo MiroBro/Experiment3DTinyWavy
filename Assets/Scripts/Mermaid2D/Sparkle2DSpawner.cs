@@ -18,6 +18,8 @@ public class Sparkle2DSpawner : MonoBehaviour
     [Header("Sparkle Look / Motion")]
     public float sparkleSize = 0.06f;
     public Color sparkleColor = new Color(1.0f, 0.85f, 0.40f);
+    [Tooltip("Optional: your own sparkle sprite. When set, the procedural star mesh is not used; sparkleColor still tints it.")]
+    public Sprite sparkleSprite;
     [Tooltip("Drift speed — the sparkle leaves her hand at this speed.")]
     public float sparkleSpeed = 1.6f;
     public float sparkleLifetime = 3.0f;
@@ -72,15 +74,29 @@ public class Sparkle2DSpawner : MonoBehaviour
         var go = new GameObject("Sparkle2D");
         Vector3 p = handTransform.position; p.z = 0f;
         go.transform.position = p;
-        go.transform.localScale = new Vector3(sparkleSize, sparkleSize, 1f);
 
-        go.AddComponent<MeshFilter>().sharedMesh = sparkleMesh;
-        var mr = go.AddComponent<MeshRenderer>();
-        var mat = new Material(Shader.Find("Sprites/Default")) { color = sparkleColor };
-        mr.sharedMaterial = mat;
-        mr.sortingOrder = sortingOrder;
-        mr.shadowCastingMode = UnityEngine.Rendering.ShadowCastingMode.Off;
-        mr.receiveShadows = false;
+        Material mat = null;
+        SpriteRenderer sr = null;
+        if (sparkleSprite != null)
+        {
+            sr = go.AddComponent<SpriteRenderer>();
+            sr.sprite = sparkleSprite;
+            sr.color = sparkleColor;
+            sr.sortingOrder = sortingOrder;
+            float s = (sparkleSize * 2f) / Mathf.Max(0.0001f, sparkleSprite.bounds.size.y);
+            go.transform.localScale = new Vector3(s, s, 1f);
+        }
+        else
+        {
+            go.transform.localScale = new Vector3(sparkleSize, sparkleSize, 1f);
+            go.AddComponent<MeshFilter>().sharedMesh = sparkleMesh;
+            var mr = go.AddComponent<MeshRenderer>();
+            mat = new Material(Shader.Find("Sprites/Default")) { color = sparkleColor };
+            mr.sharedMaterial = mat;
+            mr.sortingOrder = sortingOrder;
+            mr.shadowCastingMode = UnityEngine.Rendering.ShadowCastingMode.Off;
+            mr.receiveShadows = false;
+        }
 
         // Drift direction = opposite the (virtual) swim direction, with a little scatter.
         Vector2 swimDir = Vector2.right;
@@ -100,6 +116,7 @@ public class Sparkle2DSpawner : MonoBehaviour
         }
 
         var sparkle = go.AddComponent<Sparkle2D>();
+        sparkle.spriteRend = sr;
         sparkle.Initialize(dir * sparkleSpeed, sparkleLifetime, sparkleDespawnDistance, mat);
 
         counter += 1.0;
