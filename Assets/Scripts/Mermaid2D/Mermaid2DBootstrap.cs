@@ -263,8 +263,10 @@ public class Mermaid2DBootstrap : MonoBehaviour
     [Header("Surface Trip (live-editable, play mode)")]
     [Tooltip("World Y of the waterline she surfaces to.")]
     public float surfaceY = 5f;
-    [Tooltip("Where the boat tries to sit relative to her, in X. NEGATIVE = trailing behind her (screen-left). The boat follows her at all times, on the surface.")]
+    [Tooltip("Where the boat tries to sit relative to her while she SWIMS, in X. NEGATIVE = trailing behind her (screen-left). The boat follows her at all times, on the surface.")]
     public float surfaceBoatFollowOffset = -1.4f;
+    [Tooltip("Where the boat parks relative to her while she's AT the surface. POSITIVE = in front of her face; the crow hop-turns to face her when the boat crosses her side.")]
+    public float surfaceBoatDockOffset = 1.5f;
     [Tooltip("The crow's top rowing speed, world units/sec. Keep it below her cruise speed so the boat visibly falls behind while she swims and catches up when she slows or surfaces.")]
     public float surfaceBoatRowSpeed = 2.5f;
     [Tooltip("Seconds of smoothing on the boat's rowing. Bigger = a lazier, heavier boat.")]
@@ -287,8 +289,8 @@ public class Mermaid2DBootstrap : MonoBehaviour
     public float surfaceDiveDepth = 1.6f;
     [Tooltip("Dolphin dive: seconds from leaving the surface to the splash.")]
     public float surfaceDiveTime = 2f;
-    [Tooltip("After the splash: how long the dive's forward momentum carries before she settles back over her spot. Bigger = a longer, faster-feeling glide out of the dive.")]
-    public float surfaceDiveGlideTime = 1.8f;
+    [Tooltip("After the splash: how long the dive's forward momentum carries before she settles back over her spot. Bigger = a longer glide with a slower (less noticeable) drift back.")]
+    public float surfaceDiveGlideTime = 2.6f;
     [Tooltip("Stay at the surface until the player presses Dive. When off she dives by herself after surfaceStayTime.")]
     public bool surfaceStayUntilDive = true;
     [Tooltip("Seconds she lingers with the crow when surfaceStayUntilDive is OFF (extends until all rocks have flown).")]

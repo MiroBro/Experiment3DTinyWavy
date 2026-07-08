@@ -19,8 +19,10 @@ public class MermaidSurfaceTrip : MonoBehaviour
     [Header("Surface")]
     [Tooltip("World Y of the waterline she surfaces to.")]
     public float surfaceY = 5f;
-    [Tooltip("Where the boat tries to sit relative to her, in X. NEGATIVE = trailing behind her (screen-left). It follows her at all times.")]
+    [Tooltip("Where the boat tries to sit relative to her while she SWIMS, in X. NEGATIVE = trailing behind her (screen-left). It follows her at all times.")]
     public float boatOffsetX = -1.4f;
+    [Tooltip("Where the boat parks relative to her while she's AT the surface (and heading up). POSITIVE = in front of her face; the crow hop-turns to face her.")]
+    public float boatDockOffsetX = 1.5f;
     [Tooltip("The crow's top rowing speed, world units/sec. Below her swim speed = the gap grows while she cruises and closes when she slows or surfaces.")]
     public float boatRowSpeed = 2.5f;
     [Tooltip("How strongly the treadmill current drags the boat backward while she swims (kept in sync with the seaweed scroll so boat and ground drift together).")]
@@ -80,6 +82,7 @@ public class MermaidSurfaceTrip : MonoBehaviour
     Transform crow;
     Vector3 crowBasePos;
     float crowFlap;
+    int crowFacing = 1;   // +1 = faces +X (mermaid ahead of the boat), -1 = faces -X
 
     class FlyingRock { public Transform t; public Vector3 from, to; public float u; }
     readonly List<FlyingRock> flyingRocks = new List<FlyingRock>();
@@ -167,10 +170,14 @@ public class MermaidSurfaceTrip : MonoBehaviour
                     // (bone AND face, via the lookDown channel) follows the path tangent.
                     float dur = Mathf.Max(0.5f, diveArcTime);
                     float u = Mathf.Clamp01(phaseT / dur);
-                    float su = u * u * (3f - 2f * u);
+                    // Ease-IN only (u^1.5): gathers gently out of the hover, then the arc
+                    // ends AT SPEED — smoothstep's zero end-slope braked her to a dead stop
+                    // at the splash, which was the post-dive hitch. The crest bump is tied
+                    // to travelled distance so the arch keeps its shape.
+                    float su = Mathf.Pow(u, 1.5f);
                     Vector2 target = diveStartOffset
                         + new Vector2(diveForwardDistance * su, -diveDepth * su);
-                    target.y += diveArcHeight * Mathf.Sin(Mathf.PI * Mathf.Min(1f, u / 0.7f));
+                    target.y += diveArcHeight * Mathf.Sin(Mathf.PI * Mathf.Min(1f, su / 0.55f));
 
                     Vector2 prev = offset;
                     offset = target;
@@ -204,10 +211,11 @@ public class MermaidSurfaceTrip : MonoBehaviour
                     offset.y = Mathf.SmoothDamp(offset.y, cruiseLift, ref offsetVel.y, 1.1f, Mathf.Infinity, dt);
                     swimmer.forageBodyOffsetWorld = offset;
                     DrivePose(0f, 0f, 1f, dt);
-                    // Hand back to the forager only once we're essentially AT its cruise
-                    // pose — a bigger tolerance here made the handoff visibly snap.
-                    if (Mathf.Abs(offset.y - cruiseLift) < 0.05f && Mathf.Abs(offset.x) < 0.08f
-                        && Mathf.Abs(swimmer.bodyTiltDeg) < 3f)
+                    // Hand back to the forager once she's ROUGHLY home — its resume blend
+                    // absorbs the remaining offset smoothly, so we don't have to keep her
+                    // suspended for the whole long glide tail.
+                    if (Mathf.Abs(offset.y - cruiseLift) < 0.15f && Mathf.Abs(offset.x) < 0.35f
+                        && Mathf.Abs(swimmer.bodyTiltDeg) < 4f)
                     {
                         phase = Phase.Idle;
                         if (forager != null) forager.suspended = false;
@@ -298,12 +306,10 @@ public class MermaidSurfaceTrip : MonoBehaviour
 
     void EnsureSurfaceSet()
     {
+        // NOTE: never reposition an existing boat here — it follows/trails continuously and
+        // snapping it to the target on Begin() read as a teleport.
+        if (surfaceSet != null) return;
         float boatX = (swimmer != null ? swimmer.transform.position.x : 0f) + boatOffsetX;
-        if (surfaceSet != null)
-        {
-            boatBasePos = new Vector3(boatX, surfaceY, 0f);
-            return;
-        }
 
         surfaceSet = new GameObject("SurfaceSet");
 
@@ -361,8 +367,11 @@ public class MermaidSurfaceTrip : MonoBehaviour
         float t = Time.time;
 
         // Everything re-derives from the LIVE settings each frame, so tuning surfaceY /
-        // boat offset on Bootstrap2D during play moves the whole set immediately.
-        if (swimmer != null) boatTargetX = swimmer.transform.position.x + boatOffsetX;
+        // boat offset on Bootstrap2D during play moves the whole set immediately. While she
+        // heads up / sits at the surface the boat docks IN FRONT of her; otherwise it trails.
+        bool docked = phase == Phase.Ascend || phase == Phase.Surface;
+        if (swimmer != null)
+            boatTargetX = swimmer.transform.position.x + (docked ? boatDockOffsetX : boatOffsetX);
         boatBasePos.y = surfaceY;
         if (sky != null) sky.position = new Vector3(sky.position.x, surfaceY + 4f, 0f);
         if (waterline != null) waterline.position = new Vector3(waterline.position.x, surfaceY, 0f);
@@ -384,11 +393,24 @@ public class MermaidSurfaceTrip : MonoBehaviour
 
         if (crow != null)
         {
+            // The crow always perches on the side toward the mermaid and faces her —
+            // when the boat overtakes her side it hop-turns around.
+            if (swimmer != null)
+            {
+                int desiredFacing = boat.position.x > swimmer.transform.position.x ? -1 : 1;
+                if (desiredFacing != crowFacing)
+                {
+                    crowFacing = desiredFacing;
+                    crowFlap = 0.5f;   // the hop masks the flip
+                }
+            }
+
             crowFlap = Mathf.Max(0f, crowFlap - dt);
             float hop = crowFlap > 0f ? Mathf.Abs(Mathf.Sin(crowFlap * 22f)) * 0.06f : 0f;
             float idle = 0.008f * Mathf.Sin(t * 3.1f);
-            crow.localPosition = crowBasePos + new Vector3(0f, hop + idle, 0f);
-            crow.localScale = new Vector3(1f, 1f + (crowFlap > 0f ? 0.14f * Mathf.Abs(Mathf.Sin(crowFlap * 22f)) : 0f), 1f);
+            crow.localPosition = new Vector3(crowBasePos.x * crowFacing, crowBasePos.y + hop + idle, 0f);
+            crow.localScale = new Vector3(crowFacing,
+                1f + (crowFlap > 0f ? 0.14f * Mathf.Abs(Mathf.Sin(crowFlap * 22f)) : 0f), 1f);
         }
     }
 

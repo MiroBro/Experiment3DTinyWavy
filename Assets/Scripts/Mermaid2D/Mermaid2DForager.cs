@@ -100,6 +100,12 @@ public class Mermaid2DForager : MonoBehaviour
     Vector2 lastWiggleMid; // last frame's hand-stir offset, excluded from the gaze target
     Vector3 digSpotNear, digSpotFar;   // world points the hands are pinned to while rummaging
 
+    // Resume blend: when control returns from a suspension (surface trip), the body offset
+    // glides from wherever the trip left her to this forager's own pose — no snap.
+    bool wasSuspended;
+    Vector2 resumeOffsetFrom;
+    float resumeBlend;
+
     /// <summary>True while her hands are sifting through the grass (glints can surface).</summary>
     public bool IsRummaging => phase == Phase.Rummage;
 
@@ -122,11 +128,20 @@ public class Mermaid2DForager : MonoBehaviour
             lookCurrentDeg = 0f;
             lookVel = 0f;
             RummageEnvelope = 0f;
+            wasSuspended = true;
             return;
         }
 
         float dt = Time.deltaTime;
         phaseT += dt;
+
+        if (wasSuspended)
+        {
+            wasSuspended = false;
+            resumeOffsetFrom = swimmer != null ? swimmer.forageBodyOffsetWorld : Vector2.zero;
+            resumeBlend = 1f;
+        }
+        if (resumeBlend > 0f) resumeBlend = Mathf.Max(0f, resumeBlend - dt / 1.6f);
 
         // reachEnv: 0 = cruising, 1 = fully reached down. Drives both the slowdown and the dip.
         float reachEnv = 0f;
@@ -232,7 +247,14 @@ public class Mermaid2DForager : MonoBehaviour
         {
             Vector2 cruisePose = Vector2.up * cruiseLift;
             Vector2 rummagePose = down * bodyDip + fwd * bodyLean;
-            swimmer.forageBodyOffsetWorld = Vector2.Lerp(cruisePose, rummagePose, eased);
+            Vector2 pose = Vector2.Lerp(cruisePose, rummagePose, eased);
+            // Glide in from wherever a suspension (surface trip) left her.
+            if (resumeBlend > 0f)
+            {
+                float b = resumeBlend * resumeBlend * (3f - 2f * resumeBlend);
+                pose = Vector2.Lerp(pose, resumeOffsetFrom, b);
+            }
+            swimmer.forageBodyOffsetWorld = pose;
         }
 
         // Rummage motion: a stirring sweep along the seabed + a digging in/out bob + a slow

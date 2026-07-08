@@ -405,7 +405,7 @@ public class GemGameManager : MonoBehaviour
     // the runtime MermaidSurfaceTrip component, which made those edits look dead.
     struct TripCfg
     {
-        public float y, offX, rowSpeed, catchUp, current, lift, motion, tilt, ascend, stay,
+        public float y, offX, dockX, rowSpeed, catchUp, current, lift, motion, tilt, ascend, stay,
                      diveFwd, diveArc, diveDepth, diveTime, diveGlide;
         public bool stayUntilDive;
     }
@@ -419,6 +419,7 @@ public class GemGameManager : MonoBehaviour
         {
             y = bootstrap.surfaceY,
             offX = bootstrap.surfaceBoatFollowOffset,
+            dockX = bootstrap.surfaceBoatDockOffset,
             rowSpeed = bootstrap.surfaceBoatRowSpeed,
             catchUp = bootstrap.surfaceBoatCatchUpTime,
             current = bootstrap.seaweedScrollScale,   // boat drifts with the same current as the grass
@@ -440,6 +441,7 @@ public class GemGameManager : MonoBehaviour
 
         surfaceTrip.surfaceY = cfg.y;
         surfaceTrip.boatOffsetX = cfg.offX;
+        surfaceTrip.boatDockOffsetX = cfg.dockX;
         surfaceTrip.boatRowSpeed = cfg.rowSpeed;
         surfaceTrip.boatCatchUpTime = cfg.catchUp;
         surfaceTrip.waterCurrentScale = cfg.current;
