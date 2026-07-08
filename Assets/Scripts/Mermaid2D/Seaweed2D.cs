@@ -52,8 +52,10 @@ public class Seaweed2D : MonoBehaviour
     [Header("Treadmill Scroll")]
     [Tooltip("How fast the grass scrolls past her (to fake swimming forward) relative to her swim speed. 0 = static bed.")]
     public float scrollScale = 0.5f;
-    [Tooltip("Seconds for the scroll to ease in / out as she starts and stops swimming.")]
+    [Tooltip("Seconds for the scroll to ease IN as she starts swimming.")]
     public float scrollEaseTime = 1.0f;
+    [Tooltip("Seconds for the scroll to ease to a STOP when she settles to rummage. Shorter than scrollEaseTime so the ground plants firmly under her instead of coasting on for a beat while she digs.")]
+    public float scrollStopEaseTime = 0.3f;
 
     // Assigned by the bootstrap — body circles the grass parts around, and the swimmer that
     // drives scroll speed (and stops it while she rummages).
@@ -188,8 +190,11 @@ public class Seaweed2D : MonoBehaviour
         {
             float t = Mathf.Clamp01((swimmer.motionScale - 0.6f) / 0.37f);
             float target = t * t * (3f - 2f * t);
+            // Asymmetric ease: quick to a stop (so she looks anchored the instant she settles
+            // to dig), gentle to start (so cruising off doesn't jerk).
+            float ease = (target < scrollEase) ? scrollStopEaseTime : scrollEaseTime;
             scrollEase = Mathf.SmoothDamp(scrollEase, target, ref scrollEaseVel,
-                Mathf.Max(0.01f, scrollEaseTime), Mathf.Infinity, dt);
+                Mathf.Max(0.01f, ease), Mathf.Infinity, dt);
 
             float speed = swimmer.cruiseSpeed * scrollScale * scrollEase;
             scroll += speed * dt;

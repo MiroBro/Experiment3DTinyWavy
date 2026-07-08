@@ -24,9 +24,14 @@ public class Mermaid2DForager : MonoBehaviour
     public float maxCruise = 5f;
     [Tooltip("Seconds to ease into / out of the reach.")]
     public float reachInTime = 0.6f;
-    public float reachOutTime = 0.7f;
+    public float reachOutTime = 0.9f;
     [Tooltip("Seconds spent rummaging (hands sifting through the grass).")]
     public float rummageTime = 2.8f;
+    [Tooltip("When she finishes a dig, her head/gaze leads back to the swim direction FIRST and the body rises to follow. This is how many seconds the head leads before the body starts coming up.")]
+    public float headLeadTime = 0.35f;
+    [Tooltip("Gaze smoothing while she lifts her head to swim off — snappier than the rummage focus time so the head clearly leads instead of lagging behind the body.")]
+    [Range(0.05f, 1f)]
+    public float exitLookSmoothTime = 0.16f;
 
     [Header("Reach")]
     [Tooltip("How far her hands extend DOWN toward the seabed while rummaging.")]
@@ -69,6 +74,10 @@ public class Mermaid2DForager : MonoBehaviour
     [Tooltip("How far her hands stir/dig around the spot.")]
     public float wiggleAmplitude = 0.10f;
     public float wiggleFrequency = 5f;
+    [Tooltip("How far her HANDS rock/scoop at the wrist while digging (degrees). This is applied directly to the hand sprites (not the smoothed bones) so it reads crisply as fingers working the ground rather than a hand hovering on the spot.")]
+    public float fingerDigAngle = 20f;
+    [Tooltip("How fast the hands scoop while digging, oscillations per second-ish.")]
+    public float fingerDigFrequency = 6.5f;
 
     [Header("Loot")]
     [Tooltip("Chance each find is a gem (vs a rock).")]
@@ -99,6 +108,9 @@ public class Mermaid2DForager : MonoBehaviour
     float lookVel;
     Vector2 lastWiggleMid; // last frame's hand-stir offset, excluded from the gaze target
     Vector3 digSpotNear, digSpotFar;   // world points the hands are pinned to while rummaging
+    Transform handSpriteNear, handSpriteFar;          // hand visuals, scooped while digging
+    Quaternion handSpriteNearRest, handSpriteFarRest; // their rest rotations
+    bool handSpritesResolved;
 
     // Resume blend: when control returns from a suspension (surface trip), the body offset
     // glides from wherever the trip left her to this forager's own pose — no snap.
@@ -143,37 +155,54 @@ public class Mermaid2DForager : MonoBehaviour
         }
         if (resumeBlend > 0f) resumeBlend = Mathf.Max(0f, resumeBlend - dt / 1.6f);
 
-        // reachEnv: 0 = cruising, 1 = fully reached down. Drives both the slowdown and the dip.
-        float reachEnv = 0f;
+        // Two envelopes, 0 = cruising, 1 = fully reached down:
+        //   bodyEnv drives the body dip/rise + the slowdown + the hand reach,
+        //   lookEnv drives the gaze.
+        // They move together everywhere EXCEPT the exit, where the head leads: lookEnv
+        // returns to forward first, then bodyEnv rises to follow.
+        float bodyEnv = 0f;
+        float lookEnv = 0f;
         switch (phase)
         {
             case Phase.Cruise:
                 if (phaseT >= cruiseTarget) Enter(Phase.ReachIn);
-                reachEnv = 0f;
+                bodyEnv = 0f; lookEnv = 0f;
                 break;
 
             case Phase.ReachIn:
-                reachEnv = Mathf.Clamp01(phaseT / Mathf.Max(0.01f, reachInTime));
+                bodyEnv = Mathf.Clamp01(phaseT / Mathf.Max(0.01f, reachInTime));
+                lookEnv = bodyEnv;
                 if (phaseT >= reachInTime) Enter(Phase.Rummage);
                 break;
 
             case Phase.Rummage:
-                reachEnv = 1f;
+                bodyEnv = 1f; lookEnv = 1f;
                 if (phaseT >= rummageTime) { Collect(); Enter(Phase.ReachOut); }
                 break;
 
             case Phase.ReachOut:
-                reachEnv = 1f - Mathf.Clamp01(phaseT / Mathf.Max(0.01f, reachOutTime));
-                if (phaseT >= reachOutTime)
+            {
+                float total = Mathf.Max(0.01f, reachOutTime);
+                float lead = Mathf.Clamp(headLeadTime, 0f, total * 0.9f);
+                // Head/gaze rises back to the swim direction over the first `lead` seconds.
+                lookEnv = 1f - Mathf.Clamp01(phaseT / Mathf.Max(0.01f, lead));
+                // Body + hands hold in the dig pose through the lead, then rise to follow.
+                bodyEnv = 1f - Mathf.Clamp01((phaseT - lead) / Mathf.Max(0.01f, total - lead));
+                if (phaseT >= total)
                 {
                     cruiseTarget = Random.Range(minCruise, maxCruise);
                     Enter(Phase.Cruise);
                 }
                 break;
+            }
         }
 
-        ApplyMotion(reachEnv);
-        ApplyReach(reachEnv);
+        // The gaze snaps up quicker on the way out so the head visibly leads the body.
+        float lookSmooth = (phase == Phase.ReachOut) ? exitLookSmoothTime : lookSmoothTime;
+
+        ApplyMotion(bodyEnv, lookEnv, lookSmooth);
+        ApplyReach(bodyEnv);
+        ApplyFingerDig();
     }
 
     void Enter(Phase p)
@@ -190,16 +219,16 @@ public class Mermaid2DForager : MonoBehaviour
         }
     }
 
-    void ApplyMotion(float reachEnv)
+    void ApplyMotion(float bodyEnv, float lookEnv, float lookSmooth)
     {
         if (swimmer == null) return;
-        float eased = Mathf.SmoothStep(0f, 1f, reachEnv);
-        RummageEnvelope = eased;
-        swimmer.motionScale = Mathf.Lerp(1f, rummageMotionScale, eased);
+        float easedBody = Mathf.SmoothStep(0f, 1f, bodyEnv);
+        RummageEnvelope = easedBody;
+        swimmer.motionScale = Mathf.Lerp(1f, rummageMotionScale, easedBody);
 
         // Aim her face at the DIG SPOT (the hands' midpoint minus the stir wiggle), so her
         // gaze rests calmly on where she's digging instead of whipping after every hand
-        // flick. lookSmoothTime rounds off what's left.
+        // flick. lookSmooth rounds off what's left.
         float targetDeg = lookDownDeg;
         if (lookAtHands)
         {
@@ -220,8 +249,10 @@ public class Mermaid2DForager : MonoBehaviour
                 targetDeg = Mathf.Clamp(-angleDeg, 0f, lookAtHandsMaxDeg);
             }
         }
-        lookCurrentDeg = Mathf.SmoothDamp(lookCurrentDeg, targetDeg * eased, ref lookVel,
-            Mathf.Max(0.05f, lookSmoothTime));
+        // The gaze rides the LOOK envelope (which leads on the way out), not the body one.
+        float easedLook = Mathf.SmoothStep(0f, 1f, lookEnv);
+        lookCurrentDeg = Mathf.SmoothDamp(lookCurrentDeg, targetDeg * easedLook, ref lookVel,
+            Mathf.Max(0.05f, lookSmooth));
 
         // Split the look between the OUTER rotation (head bone → neck/body curl) and the
         // INNER one (face-only) so face focus is tunable without disturbing the body.
@@ -230,14 +261,14 @@ public class Mermaid2DForager : MonoBehaviour
         swimmer.faceLookDownDeg = lookCurrentDeg * (1f - share);
     }
 
-    void ApplyReach(float reachEnv)
+    void ApplyReach(float bodyEnv)
     {
         // She faces screen-right; the reach points down-and-under regardless of how her
         // body is pitching with the porpoise.
         Vector2 fwd = Vector2.right;
         Vector2 down = Vector2.down;
 
-        float eased = Mathf.SmoothStep(0f, 1f, reachEnv);
+        float eased = Mathf.SmoothStep(0f, 1f, bodyEnv);
         Vector2 dip = (down * reachDown + fwd * reachForward) * eased;
 
         // Body height: cruise lifted up over the grass, then descend + lean in over the dig
@@ -304,6 +335,44 @@ public class Mermaid2DForager : MonoBehaviour
                           + fwd * (reachForward * elbowForwardFraction)) * eased;
         if (elbowNear != null) elbowNear.reachOffsetWorld = elbowDip;
         if (elbowFar != null) elbowFar.reachOffsetWorld = elbowDip;
+    }
+
+    // Scoop the hand SPRITES at the wrist while digging. This rotates the sprites directly
+    // (not the heavily-smoothed hand bones), so the quick digging motion actually shows —
+    // otherwise the bone lag damps it into a hand that just hovers on the spot. The amplitude
+    // rides RummageEnvelope, so it fades in as she reaches down and out as she lifts away.
+    void ApplyFingerDig()
+    {
+        if (!handSpritesResolved) ResolveHandSprites();
+        float env = RummageEnvelope;
+        float t = Time.time * Mathf.Max(0.01f, fingerDigFrequency);
+        ApplyScoop(handSpriteNear, handSpriteNearRest, t, env);
+        ApplyScoop(handSpriteFar, handSpriteFarRest, t + 1.3f, env);   // hands work out of phase
+    }
+
+    void ApplyScoop(Transform spr, Quaternion rest, float t, float env)
+    {
+        if (spr == null) return;
+        // A fast primary rock plus a faster harmonic so it reads as fingers clawing the
+        // seabed, not a metronome. env fades the whole thing to rest when she's not digging.
+        float claw = Mathf.Sin(t) * 0.7f + Mathf.Sin(t * 2.3f + 0.5f) * 0.3f;
+        spr.localRotation = rest * Quaternion.Euler(0f, 0f, claw * fingerDigAngle * env);
+    }
+
+    void ResolveHandSprites()
+    {
+        handSpritesResolved = true;
+        handSpriteNear = FindHandSprite(handNear);
+        handSpriteFar = FindHandSprite(handFar);
+        if (handSpriteNear != null) handSpriteNearRest = handSpriteNear.localRotation;
+        if (handSpriteFar != null) handSpriteFarRest = handSpriteFar.localRotation;
+    }
+
+    static Transform FindHandSprite(Mermaid2DBone handBone)
+    {
+        if (handBone == null) return null;
+        var sr = handBone.GetComponentInChildren<SpriteRenderer>();
+        return sr != null ? sr.transform : null;
     }
 
     void Collect()

@@ -82,7 +82,9 @@ public class MermaidSurfaceTrip : MonoBehaviour
     Transform crow;
     Vector3 crowBasePos;
     float crowFlap;
-    int crowFacing = 1;   // +1 = faces +X (mermaid ahead of the boat), -1 = faces -X
+    int crowFacing = 1;         // TARGET facing: +1 = faces +X (toward a mermaid ahead), -1 = -X
+    float crowFacingVisual = 1f; // eased toward crowFacing so the bird turns in place, not snaps
+    const float CrowTurnTime = 0.32f;   // seconds to turn around on the spot
 
     class FlyingRock { public Transform t; public Vector3 from, to; public float u; }
     readonly List<FlyingRock> flyingRocks = new List<FlyingRock>();
@@ -393,23 +395,27 @@ public class MermaidSurfaceTrip : MonoBehaviour
 
         if (crow != null)
         {
-            // The crow always perches on the side toward the mermaid and faces her —
-            // when the boat overtakes her side it hop-turns around.
+            // The crow keeps its perch on the boat and simply TURNS IN PLACE to face the
+            // mermaid when the boat crosses her side — no hopping to the other end of the boat.
             if (swimmer != null)
             {
                 int desiredFacing = boat.position.x > swimmer.transform.position.x ? -1 : 1;
                 if (desiredFacing != crowFacing)
                 {
                     crowFacing = desiredFacing;
-                    crowFlap = 0.5f;   // the hop masks the flip
+                    crowFlap = 0.35f;   // a little flap as it turns
                 }
             }
+
+            // Ease the visual facing across zero: the sprite squashes to edge-on and back,
+            // which reads as the bird pivoting on the spot instead of instantly mirroring.
+            crowFacingVisual = Mathf.MoveTowards(crowFacingVisual, crowFacing, dt / CrowTurnTime);
 
             crowFlap = Mathf.Max(0f, crowFlap - dt);
             float hop = crowFlap > 0f ? Mathf.Abs(Mathf.Sin(crowFlap * 22f)) * 0.06f : 0f;
             float idle = 0.008f * Mathf.Sin(t * 3.1f);
-            crow.localPosition = new Vector3(crowBasePos.x * crowFacing, crowBasePos.y + hop + idle, 0f);
-            crow.localScale = new Vector3(crowFacing,
+            crow.localPosition = new Vector3(crowBasePos.x, crowBasePos.y + hop + idle, 0f);
+            crow.localScale = new Vector3(crowFacingVisual,
                 1f + (crowFlap > 0f ? 0.14f * Mathf.Abs(Mathf.Sin(crowFlap * 22f)) : 0f), 1f);
         }
     }

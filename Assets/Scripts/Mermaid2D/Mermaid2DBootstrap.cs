@@ -250,6 +250,12 @@ public class Mermaid2DBootstrap : MonoBehaviour
     public float forageWiggleAmplitude = 0.10f;
     [Tooltip("How fast her hands stir, in stirs per second-ish.")]
     public float forageWiggleFrequency = 5f;
+    [Tooltip("How far her HANDS rock/scoop at the wrist while digging (degrees). Applied straight to the hand sprites so it reads as fingers working the ground, not a hand hovering on the spot.")]
+    public float forageFingerDigAngle = 20f;
+    [Tooltip("How fast the hands scoop while digging, oscillations per second-ish.")]
+    public float forageFingerDigFrequency = 6.5f;
+    [Tooltip("When she finishes a dig, how many seconds her head/gaze leads back toward the swim direction BEFORE her body starts rising to follow (head leads, body follows).")]
+    public float forageHeadLeadTime = 0.35f;
     [Tooltip("Multiplier on the ARM flow (elbow/hand floppiness) while she rummages. Lower = calmer, more controlled elbows during the dig; 1 = arms keep their full swim flow.")]
     [Range(0.05f, 2f)]
     public float forageArmFlowScale = 0.45f;
@@ -1280,6 +1286,9 @@ public class Mermaid2DBootstrap : MonoBehaviour
             forager.lookSmoothTime = forageFaceFocusTime;
             forager.wiggleAmplitude = forageWiggleAmplitude;
             forager.wiggleFrequency = forageWiggleFrequency;
+            forager.fingerDigAngle = forageFingerDigAngle;
+            forager.fingerDigFrequency = forageFingerDigFrequency;
+            forager.headLeadTime = forageHeadLeadTime;
             forager.rummageMotionScale = forageBodyMotionScale;
             forager.handGroundPin = forageHandGroundPin;
             foragerRef = forager;
@@ -1476,6 +1485,9 @@ public class Mermaid2DBootstrap : MonoBehaviour
             foragerRef.lookSmoothTime = forageFaceFocusTime;
             foragerRef.wiggleAmplitude = forageWiggleAmplitude;
             foragerRef.wiggleFrequency = forageWiggleFrequency;
+            foragerRef.fingerDigAngle = forageFingerDigAngle;
+            foragerRef.fingerDigFrequency = forageFingerDigFrequency;
+            foragerRef.headLeadTime = forageHeadLeadTime;
             foragerRef.rummageMotionScale = forageBodyMotionScale;
             foragerRef.handGroundPin = forageHandGroundPin;
         }
