@@ -47,12 +47,14 @@ public class MermaidGameUI : MonoBehaviour
     void OnEnable()
     {
         if (transform.childCount == 0) GenerateUI();
+        else EnsureSurfaceButton();
     }
 
     void Start()
     {
         if (!Application.isPlaying) return;
         if (transform.childCount == 0) GenerateUI();
+        else EnsureSurfaceButton();
         mgr = GemGameManager.Instance != null ? GemGameManager.Instance : FindAnyObjectByType<GemGameManager>();
         if (mgr != null)
         {
@@ -143,11 +145,23 @@ public class MermaidGameUI : MonoBehaviour
     void BuildButtonColumn()
     {
         var col = Child(gameObject, "Buttons");
-        SetRect(col, new Vector2(0, 1), new Vector2(12, -152), new Vector2(120, 300));
-        string[] names = { "GemsBtn", "JournalBtn", "QuestsBtn", "ShopBtn", "TravelBtn" };
-        string[] labels = { "My Gems", "Journal", "Quests", "Shop", "Travel" };
+        SetRect(col, new Vector2(0, 1), new Vector2(12, -152), new Vector2(120, 352));
+        string[] names = { "GemsBtn", "JournalBtn", "QuestsBtn", "ShopBtn", "TravelBtn", "SurfaceBtn" };
+        string[] labels = { "My Gems", "Journal", "Quests", "Shop", "Travel", "Surface" };
         for (int i = 0; i < names.Length; i++)
             MakeButton(col, names[i], labels[i], new Vector2(0, 1), new Vector2(0, -i * 52), new Vector2(120, 44));
+    }
+
+    // Injects the Surface button into a UI that was generated (and saved into the scene)
+    // before the button existed — without forcing a full "Regenerate UI" that would throw
+    // away the user's restyling.
+    void EnsureSurfaceButton()
+    {
+        var col = transform.Find("Buttons");
+        if (col == null || col.Find("SurfaceBtn") != null) return;
+        int slot = col.childCount;
+        MakeButton(col.gameObject, "SurfaceBtn", "Surface",
+            new Vector2(0, 1), new Vector2(0, -slot * 52), new Vector2(120, 44));
     }
 
     void BuildToast()
@@ -319,6 +333,7 @@ public class MermaidGameUI : MonoBehaviour
         Wire("Buttons/QuestsBtn", () => TogglePanel("QuestsPanel", RefreshQuests));
         Wire("Buttons/ShopBtn", () => TogglePanel("ShopPanel", RefreshShop));
         Wire("Buttons/TravelBtn", () => TogglePanel("TravelPanel", RefreshTravel));
+        Wire("Buttons/SurfaceBtn", () => { CloseAllPanels(); mgr?.GoToSurface(); });
 
         foreach (var p in openable)
         {

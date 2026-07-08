@@ -26,6 +26,7 @@ public class GemGameManager : MonoBehaviour
     public Mermaid2DBootstrap bootstrap;
     public Mermaid2DForager forager;
     public Underwater2DAtmosphere atmosphere;
+    public MermaidSurfaceTrip surfaceTrip;
 
     public MermaidGameState State { get; private set; }
 
@@ -364,6 +365,47 @@ public class GemGameManager : MonoBehaviour
         long got = State.SellAll();
         if (got > 0) Toast($"Sold everything for {MermaidGameDefs.MoneyString(got)} coins!");
         Changed();
+    }
+
+    /// <summary>UI hook: send her up to the boat to sell her rocks to the crow.</summary>
+    public void GoToSurface()
+    {
+        EnsureWiring();
+        if (forager == null || forager.swimmer == null) return;
+        if (surfaceTrip != null && surfaceTrip.IsActive) return;
+        if (surfaceTrip == null)
+        {
+            var go = new GameObject("MermaidSurfaceTrip");
+            surfaceTrip = go.AddComponent<MermaidSurfaceTrip>();
+            surfaceTrip.manager = this;
+            surfaceTrip.forager = forager;
+            surfaceTrip.swimmer = forager.swimmer;
+        }
+        surfaceTrip.Begin();
+    }
+
+    /// <summary>
+    /// Sell every ROCK stack in the satchel (gems stay — those go through My Gems). Called
+    /// by the surface trip when she reaches the crow's boat. Returns coins earned.
+    /// </summary>
+    public long SellRocksToCrow(out int rocksSold)
+    {
+        rocksSold = 0;
+        long total = 0;
+        for (int i = State.inventory.Count - 1; i >= 0; i--)
+        {
+            var s = State.inventory[i];
+            var def = MermaidGameDefs.Item(s.itemId);
+            if (def == null || !def.isRock) continue;
+            rocksSold += s.count;
+            total += State.SellStack(s);
+        }
+        if (rocksSold > 0)
+            Toast($"The crow collects {rocksSold} rock{(rocksSold == 1 ? "" : "s")}! +{MermaidGameDefs.MoneyString(total)} coins");
+        else
+            Toast("The crow caws — you have no rocks to sell.");
+        Changed();
+        return total;
     }
 
     public void SellStack(MermaidGameState.InvStack s)

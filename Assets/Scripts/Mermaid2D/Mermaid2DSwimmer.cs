@@ -46,6 +46,9 @@ public class Mermaid2DSwimmer : MonoBehaviour
     /// </summary>
     public Vector2 SwimVelocity { get; private set; }
 
+    /// <summary>Her home position — the point the bob and forage offsets are relative to.</summary>
+    public Vector3 BasePosition => basePos;
+
     Vector3 basePos;
     float porpoisePhase;
     bool baseCaptured;

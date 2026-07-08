@@ -232,6 +232,15 @@ public class Mermaid2DBootstrap : MonoBehaviour
     [Tooltip("Painted hand.")]
     public Texture2D handTexture;
 
+    [Header("Foraging Reach (live-editable, play mode)")]
+    [Tooltip("How far FORWARD (+X, ahead of her body) her hands reach while rummaging, so she digs out in front of her face.")]
+    public float forageReachForward = 1.4f;
+    [Tooltip("How far DOWN her hands reach into the grass while rummaging.")]
+    public float forageReachDown = 1.1f;
+    [Tooltip("Clamp on how far down she rotates her face to watch her hands while digging.")]
+    [Range(0f, 130f)]
+    public float forageLookAtHandsMaxDeg = 95f;
+
     [Header("Seaweed Motion (live-editable)")]
     [Tooltip("How far each blade sways side to side.")]
     public float seaweedSwayAmplitude = 0.35f;
@@ -309,6 +318,8 @@ public class Mermaid2DBootstrap : MonoBehaviour
 
     // Seaweed runtime state (both depth layers) — kept so the motion fields tune live.
     readonly List<Seaweed2D> seaweedLayers = new List<Seaweed2D>();
+
+    Mermaid2DForager foragerRef;   // runtime forager, kept so the reach fields tune live
 
     // Hair runtime state.
     readonly List<GameObject> hairGameObjects = new List<GameObject>();
@@ -399,6 +410,7 @@ public class Mermaid2DBootstrap : MonoBehaviour
         flukeBoneSet.Clear();
         armBoneSet.Clear();
         seaweedLayers.Clear();
+        foragerRef = null;
         hairGameObjects.Clear();
         hairBones.Clear();
         hairBoneSet.Clear();
@@ -1200,6 +1212,10 @@ public class Mermaid2DBootstrap : MonoBehaviour
             forager.inventory = inventory;
             forager.gemSprite = gemSprite;
             forager.rockSprite = rockSprite;
+            forager.reachForward = forageReachForward;
+            forager.reachDown = forageReachDown;
+            forager.lookAtHandsMaxDeg = forageLookAtHandsMaxDeg;
+            foragerRef = forager;
         }
     }
 
@@ -1378,6 +1394,14 @@ public class Mermaid2DBootstrap : MonoBehaviour
             RebuildHairColliders();
         }
         UpdateHairColliderRadii();
+
+        // 5b. Live foraging reach.
+        if (foragerRef != null)
+        {
+            foragerRef.reachForward = forageReachForward;
+            foragerRef.reachDown = forageReachDown;
+            foragerRef.lookAtHandsMaxDeg = forageLookAtHandsMaxDeg;
+        }
 
         // 6. Live seaweed motion (segments change rebuilds that bed's mesh).
         int swSeg = Mathf.Clamp(seaweedSegments, 2, 24);

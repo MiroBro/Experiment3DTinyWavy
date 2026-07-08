@@ -32,12 +32,17 @@ public class Mermaid2DForager : MonoBehaviour
     [Tooltip("How far her hands extend DOWN toward the seabed while rummaging.")]
     public float reachDown = 1.1f;
     [Tooltip("Forward reach so the dig happens UNDER HER FACE rather than under her belly.")]
-    public float reachForward = 0.4f;
+    public float reachForward = 1.4f;
     [Tooltip("Elbows follow the reach at this fraction of the hands, for a natural arm line.")]
     [Range(0f, 1f)]
     public float elbowReachFraction = 0.6f;
-    [Tooltip("Degrees she tips her head down to look at her hands while rummaging.")]
+    [Tooltip("Fallback head tilt while rummaging, degrees — only used when lookAtHands is off.")]
     public float lookDownDeg = 34f;
+    [Tooltip("Aim her face at the midpoint of her hands while rummaging, instead of the fixed lookDownDeg tilt.")]
+    public bool lookAtHands = true;
+    [Tooltip("Clamp on how far down she'll rotate her face to watch her hands, in degrees.")]
+    [Range(0f, 130f)]
+    public float lookAtHandsMaxDeg = 95f;
     [Tooltip("Extra downward lean at the dig (on top of dropping from cruiseLift).")]
     public float bodyDip = 0.1f;
     [Tooltip("How high above her base she cruises when NOT rummaging — keeps her swimming well up over the grass. She dives down from here to dig at the roots.")]
@@ -68,10 +73,18 @@ public class Mermaid2DForager : MonoBehaviour
     /// the simple gem/rock split above.</summary>
     [System.NonSerialized] public GemGameManager gameManager;
 
+    /// <summary>
+    /// While true the forager is dormant (pinned to Cruise, writes nothing to the swimmer
+    /// or bones) so another driver — e.g. <see cref="MermaidSurfaceTrip"/> — can steer her.
+    /// </summary>
+    [System.NonSerialized] public bool suspended;
+
     enum Phase { Cruise, ReachIn, Rummage, ReachOut }
     Phase phase = Phase.Cruise;
     float phaseT;          // seconds elapsed in the current phase
     float cruiseTarget;    // randomized cruise duration
+    float lookCurrentDeg;  // smoothed look-at-hands angle
+    float lookVel;
 
     /// <summary>True while her hands are sifting through the grass (glints can surface).</summary>
     public bool IsRummaging => phase == Phase.Rummage;
@@ -83,6 +96,16 @@ public class Mermaid2DForager : MonoBehaviour
 
     void Update()
     {
+        if (suspended)
+        {
+            // Park in Cruise so she resumes with a fresh swim spell when control returns.
+            phase = Phase.Cruise;
+            phaseT = 0f;
+            lookCurrentDeg = 0f;
+            lookVel = 0f;
+            return;
+        }
+
         float dt = Time.deltaTime;
         phaseT += dt;
 
@@ -126,7 +149,31 @@ public class Mermaid2DForager : MonoBehaviour
         if (swimmer == null) return;
         float eased = Mathf.SmoothStep(0f, 1f, reachEnv);
         swimmer.motionScale = Mathf.Lerp(1f, rummageMotionScale, eased);
-        swimmer.lookDownDeg = lookDownDeg * eased;
+
+        // Aim her face at where her hands actually are (they wiggle and the arms saturate
+        // against their bend limits, so a fixed angle always misses). Heavily smoothed so
+        // the gaze tracks the dig calmly instead of jittering with the hand stir.
+        float targetDeg = lookDownDeg;
+        if (lookAtHands)
+        {
+            Vector3 hands;
+            if (handNear != null && handFar != null)
+                hands = (handNear.transform.position + handFar.transform.position) * 0.5f;
+            else if (handNear != null) hands = handNear.transform.position;
+            else if (handFar != null) hands = handFar.transform.position;
+            else hands = swimmer.transform.position + Vector3.down;
+
+            Vector2 toHands = hands - swimmer.transform.position;
+            if (toHands.sqrMagnitude > 0.01f)
+            {
+                // She faces +X; hands below-forward give a negative angle. lookDownDeg is
+                // "degrees of downward face tilt", so negate.
+                float angleDeg = Mathf.Atan2(toHands.y, toHands.x) * Mathf.Rad2Deg;
+                targetDeg = Mathf.Clamp(-angleDeg, 0f, lookAtHandsMaxDeg);
+            }
+        }
+        lookCurrentDeg = Mathf.SmoothDamp(lookCurrentDeg, targetDeg * eased, ref lookVel, 0.3f);
+        swimmer.lookDownDeg = lookCurrentDeg;
     }
 
     void ApplyReach(float reachEnv)
