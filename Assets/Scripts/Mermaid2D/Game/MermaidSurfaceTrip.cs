@@ -32,6 +32,9 @@ public class MermaidSurfaceTrip : MonoBehaviour
     [Tooltip("How much swim undulation her (submerged) body keeps while she holds position at the surface.")]
     [Range(0f, 1f)]
     public float surfaceMotionScale = 0.4f;
+    [Tooltip("Nose-up body tilt at the surface, degrees: torso and tail hang down underwater while only her face is out. Her face stays level — the tilt is gaze-compensated.")]
+    [Range(0f, 85f)]
+    public float surfaceBodyTiltDeg = 58f;
     [Tooltip("The boat starts this far off and rows in to meet her each trip.")]
     public float boatTrailDistance = 2.6f;
     [Tooltip("SmoothDamp time for the boat's catch-up glide. Small = it arrives briskly.")]
@@ -43,6 +46,7 @@ public class MermaidSurfaceTrip : MonoBehaviour
     bool sold;
     Vector2 offset, offsetVel;
     float lookVel;
+    float tiltVel;
 
     GameObject surfaceSet;
     Transform boat;
@@ -59,6 +63,17 @@ public class MermaidSurfaceTrip : MonoBehaviour
     static Mesh _disc, _quad;
 
     public bool IsActive => phase != Phase.Idle;
+
+    /// <summary>True while she's up (or on the way up) — the UI shows "Dive" instead of "Surface".</summary>
+    public bool CanDive => phase == Phase.Ascend || phase == Phase.Surface;
+
+    /// <summary>Send her back down early (the "Dive" button). Any flying rocks finish on their own.</summary>
+    public void RequestDive()
+    {
+        if (!CanDive) return;
+        phase = Phase.Descend;
+        phaseT = 0f;
+    }
 
     public void Begin()
     {
@@ -101,19 +116,21 @@ public class MermaidSurfaceTrip : MonoBehaviour
             switch (phase)
             {
                 case Phase.Ascend:
-                    Drive(new Vector2(0f, surfaceOffsetY), -24f, 1f, dt);   // nose up toward the light
+                    // Nose up toward the light; the body starts pitching toward vertical on the way.
+                    Drive(new Vector2(0f, surfaceOffsetY), -20f, surfaceBodyTiltDeg * 0.5f, 1f, dt);
                     if (Mathf.Abs(offset.y - surfaceOffsetY) < 0.12f) { phase = Phase.Surface; phaseT = 0f; }
                     break;
 
                 case Phase.Surface:
-                    Drive(new Vector2(0f, surfaceOffsetY), 10f, surfaceMotionScale, dt); // treads water, eyeing the boat
+                    // Treads water: body hangs down at the tilt, face level, eyeing the boat.
+                    Drive(new Vector2(0f, surfaceOffsetY), 8f, surfaceBodyTiltDeg, surfaceMotionScale, dt);
                     if (!sold && phaseT >= sellDelay) SellToCrow();
                     if (phaseT >= surfaceStayTime && flyingRocks.Count == 0) { phase = Phase.Descend; phaseT = 0f; }
                     break;
 
                 case Phase.Descend:
                     float cruiseLift = forager != null ? forager.cruiseLift : 1.2f;
-                    Drive(Vector2.up * cruiseLift, 0f, 1f, dt);
+                    Drive(Vector2.up * cruiseLift, 0f, 0f, 1f, dt);
                     if (Mathf.Abs(offset.y - cruiseLift) < 0.15f)
                     {
                         phase = Phase.Idle;
@@ -122,17 +139,23 @@ public class MermaidSurfaceTrip : MonoBehaviour
                     break;
             }
         }
+        else if (swimmer != null && Mathf.Abs(swimmer.bodyTiltDeg) > 0.01f)
+        {
+            // Idle: bleed any leftover body tilt away (the forager never touches it).
+            swimmer.bodyTiltDeg = Mathf.SmoothDamp(swimmer.bodyTiltDeg, 0f, ref tiltVel, 0.5f, Mathf.Infinity, dt);
+        }
 
         UpdateFlyingRocks(dt);
         AnimateSet(dt);
     }
 
-    void Drive(Vector2 targetOffset, float lookDownTarget, float motion, float dt)
+    void Drive(Vector2 targetOffset, float lookDownTarget, float tiltTarget, float motion, float dt)
     {
         offset = Vector2.SmoothDamp(offset, targetOffset, ref offsetVel, ascendSmoothTime, Mathf.Infinity, dt);
         swimmer.forageBodyOffsetWorld = offset;
         swimmer.motionScale = motion;
         swimmer.lookDownDeg = Mathf.SmoothDamp(swimmer.lookDownDeg, lookDownTarget, ref lookVel, 0.5f, Mathf.Infinity, dt);
+        swimmer.bodyTiltDeg = Mathf.SmoothDamp(swimmer.bodyTiltDeg, tiltTarget, ref tiltVel, 0.8f, Mathf.Infinity, dt);
     }
 
     // ---------------------------------------------------------------- selling

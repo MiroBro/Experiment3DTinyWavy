@@ -253,6 +253,31 @@ public class Mermaid2DBootstrap : MonoBehaviour
     [Tooltip("How much swim undulation her BODY keeps while rummaging. 0 = almost still (a faint bob floor always remains), 1 = full swim wave.")]
     [Range(0f, 1f)]
     public float forageBodyMotionScale = 0.5f;
+    [Tooltip("Pin her hands to the ground spot where the dig started. 1 = firmly planted while the body undulates above them, 0 = hands float up and down with the body.")]
+    [Range(0f, 1f)]
+    public float forageHandGroundPin = 1f;
+
+    [Header("Surface Trip (live-editable, play mode)")]
+    [Tooltip("World Y of the waterline she surfaces to.")]
+    public float surfaceY = 5f;
+    [Tooltip("The boat's spot, this far ahead (+X) of where she pops up.")]
+    public float surfaceBoatOffsetX = 1.7f;
+    [Tooltip("The boat starts this far off to the side and rows in to meet her each trip.")]
+    public float surfaceBoatTrailDistance = 4.5f;
+    [Tooltip("Seconds of catch-up glide for the boat. Bigger = it lags behind her longer.")]
+    public float surfaceBoatCatchUpTime = 1.1f;
+    [Tooltip("How high above the waterline her head-bob centre sits — just her face out.")]
+    public float surfaceHeadLift = 0.12f;
+    [Tooltip("How much swim undulation her submerged body keeps while treading at the surface.")]
+    [Range(0f, 1f)]
+    public float surfaceMotionScale = 0.4f;
+    [Tooltip("How steeply her body tilts nose-up at the surface, so torso and tail hang DOWN underwater while only her face is out. Her face itself stays level (gaze-compensated).")]
+    [Range(0f, 85f)]
+    public float surfaceBodyTiltDeg = 58f;
+    [Tooltip("SmoothDamp time for the swim up / down. Bigger = a longer, lazier ascent.")]
+    public float surfaceAscendSmoothTime = 0.9f;
+    [Tooltip("Seconds she lingers with the crow (extends until all rocks have flown; Dive cuts it short).")]
+    public float surfaceStayTime = 3.4f;
 
     [Header("Seaweed Motion (live-editable)")]
     [Tooltip("How far each blade sways side to side.")]
@@ -1232,6 +1257,7 @@ public class Mermaid2DBootstrap : MonoBehaviour
             forager.wiggleAmplitude = forageWiggleAmplitude;
             forager.wiggleFrequency = forageWiggleFrequency;
             forager.rummageMotionScale = forageBodyMotionScale;
+            forager.handGroundPin = forageHandGroundPin;
             foragerRef = forager;
         }
     }
@@ -1426,6 +1452,7 @@ public class Mermaid2DBootstrap : MonoBehaviour
             foragerRef.wiggleAmplitude = forageWiggleAmplitude;
             foragerRef.wiggleFrequency = forageWiggleFrequency;
             foragerRef.rummageMotionScale = forageBodyMotionScale;
+            foragerRef.handGroundPin = forageHandGroundPin;
         }
 
         // 6. Live seaweed motion (segments change rebuilds that bed's mesh).

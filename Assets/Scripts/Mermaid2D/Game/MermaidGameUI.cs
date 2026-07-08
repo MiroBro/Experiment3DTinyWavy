@@ -70,7 +70,14 @@ public class MermaidGameUI : MonoBehaviour
     {
         if (!Application.isPlaying) return;
         hudTimer -= Time.deltaTime;
-        if (hudTimer <= 0f) { hudTimer = 0.25f; RefreshHud(); RefreshQuestTimer(); }
+        if (hudTimer <= 0f)
+        {
+            hudTimer = 0.25f;
+            RefreshHud();
+            RefreshQuestTimer();
+            SetText("Buttons/SurfaceBtn/Label",
+                (mgr != null && mgr.SurfaceButtonShowsDive) ? "Dive" : "Surface");
+        }
 
         if (toastTimer > 0f)
         {

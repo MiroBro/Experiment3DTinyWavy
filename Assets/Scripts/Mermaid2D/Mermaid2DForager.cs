@@ -36,6 +36,9 @@ public class Mermaid2DForager : MonoBehaviour
     [Tooltip("Elbows follow the reach at this fraction of the hands, for a natural arm line.")]
     [Range(0f, 1f)]
     public float elbowReachFraction = 0.6f;
+    [Tooltip("Pin her hands to the SPOT ON THE GROUND where the dig started, instead of letting them ride up and down with the body bob. 1 = firmly planted (the body undulates above steady hands), 0 = old floating behavior.")]
+    [Range(0f, 1f)]
+    public float handGroundPin = 1f;
     [Tooltip("Fallback head tilt while rummaging, degrees — only used when lookAtHands is off.")]
     public float lookDownDeg = 34f;
     [Tooltip("Aim her face at the midpoint of her hands while rummaging, instead of the fixed lookDownDeg tilt.")]
@@ -89,6 +92,7 @@ public class Mermaid2DForager : MonoBehaviour
     float lookCurrentDeg;  // smoothed look-at-hands angle
     float lookVel;
     Vector2 lastWiggleMid; // last frame's hand-stir offset, excluded from the gaze target
+    Vector3 digSpotNear, digSpotFar;   // world points the hands are pinned to while rummaging
 
     /// <summary>True while her hands are sifting through the grass (glints can surface).</summary>
     public bool IsRummaging => phase == Phase.Rummage;
@@ -151,7 +155,19 @@ public class Mermaid2DForager : MonoBehaviour
         ApplyReach(reachEnv);
     }
 
-    void Enter(Phase p) { phase = p; phaseT = 0f; }
+    void Enter(Phase p)
+    {
+        phase = p;
+        phaseT = 0f;
+        // The moment the reach lands, remember WHERE the hands touched down (world space) —
+        // that's the ground spot they stay pinned to for the whole rummage.
+        if (p == Phase.Rummage)
+        {
+            if (handNear != null) digSpotNear = handNear.transform.position;
+            if (handFar != null) digSpotFar = handFar.transform.position;
+            digSpotNear.z = 0f; digSpotFar.z = 0f;
+        }
+    }
 
     void ApplyMotion(float reachEnv)
     {
@@ -224,8 +240,31 @@ public class Mermaid2DForager : MonoBehaviour
         }
         lastWiggleMid = (wNear + wFar) * 0.5f;
 
-        if (handNear != null) handNear.reachOffsetWorld = dip + wNear;
-        if (handFar != null) handFar.reachOffsetWorld = dip + wFar;
+        // While rummaging, pin each hand to the WORLD spot where it touched down: the pinned
+        // offset cancels the body bob out of the hand's target, so the hands work the ground
+        // while the body undulates above them. (The arm can still be pulled short of the
+        // spot at the top of a bob — rest-distance keeps it from stretching.)
+        if (phase == Phase.Rummage && handGroundPin > 0f)
+        {
+            float pin = Mathf.Clamp01(handGroundPin);
+            if (handNear != null)
+            {
+                Vector2 pinned = (Vector2)(digSpotNear - handNear.NaturalIdealPosition());
+                handNear.reachOffsetWorld = Vector2.Lerp(dip, pinned, pin) + wNear;
+            }
+            if (handFar != null)
+            {
+                Vector2 pinned = (Vector2)(digSpotFar - handFar.NaturalIdealPosition());
+                handFar.reachOffsetWorld = Vector2.Lerp(dip, pinned, pin) + wFar;
+            }
+        }
+        else
+        {
+            if (handNear != null) handNear.reachOffsetWorld = dip + wNear;
+            if (handFar != null) handFar.reachOffsetWorld = dip + wFar;
+        }
+
+        // Elbows keep the softer body-relative reach — they're allowed to undulate a little.
         Vector2 elbowDip = dip * elbowReachFraction;
         if (elbowNear != null) elbowNear.reachOffsetWorld = elbowDip;
         if (elbowFar != null) elbowFar.reachOffsetWorld = elbowDip;

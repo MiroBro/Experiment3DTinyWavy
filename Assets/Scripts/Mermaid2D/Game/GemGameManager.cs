@@ -94,6 +94,7 @@ public class GemGameManager : MonoBehaviour
         UpdateHaste();
         UpdateGlints();
         HandleClicks();
+        ApplySurfaceTripSettings();
 
         saveTimer += Time.deltaTime;
         if (saveTimer > 30f) { saveTimer = 0f; State.Save(); }
@@ -367,12 +368,19 @@ public class GemGameManager : MonoBehaviour
         Changed();
     }
 
-    /// <summary>UI hook: send her up to the boat to sell her rocks to the crow.</summary>
+    /// <summary>True while she's up at (or heading to) the boat — the button reads "Dive".</summary>
+    public bool SurfaceButtonShowsDive => surfaceTrip != null && surfaceTrip.CanDive;
+
+    /// <summary>
+    /// UI hook: send her up to the boat to sell her rocks to the crow — or, if she's
+    /// already up (or on the way), send her diving back down.
+    /// </summary>
     public void GoToSurface()
     {
         EnsureWiring();
         if (forager == null || forager.swimmer == null) return;
-        if (surfaceTrip != null && surfaceTrip.IsActive) return;
+        if (surfaceTrip != null && surfaceTrip.CanDive) { surfaceTrip.RequestDive(); return; }
+        if (surfaceTrip != null && surfaceTrip.IsActive) return;   // already descending
         if (surfaceTrip == null)
         {
             var go = new GameObject("MermaidSurfaceTrip");
@@ -381,7 +389,24 @@ public class GemGameManager : MonoBehaviour
             surfaceTrip.forager = forager;
             surfaceTrip.swimmer = forager.swimmer;
         }
+        ApplySurfaceTripSettings();
         surfaceTrip.Begin();
+    }
+
+    // The trip object is runtime-built, so its knobs live on Bootstrap2D (serialized in the
+    // scene, under "Surface Trip"). Copied every frame so they tune live during play.
+    void ApplySurfaceTripSettings()
+    {
+        if (surfaceTrip == null || bootstrap == null) return;
+        surfaceTrip.surfaceY = bootstrap.surfaceY;
+        surfaceTrip.boatOffsetX = bootstrap.surfaceBoatOffsetX;
+        surfaceTrip.boatTrailDistance = bootstrap.surfaceBoatTrailDistance;
+        surfaceTrip.boatCatchUpTime = bootstrap.surfaceBoatCatchUpTime;
+        surfaceTrip.surfaceHeadLift = bootstrap.surfaceHeadLift;
+        surfaceTrip.surfaceMotionScale = bootstrap.surfaceMotionScale;
+        surfaceTrip.surfaceBodyTiltDeg = bootstrap.surfaceBodyTiltDeg;
+        surfaceTrip.ascendSmoothTime = bootstrap.surfaceAscendSmoothTime;
+        surfaceTrip.surfaceStayTime = bootstrap.surfaceStayTime;
     }
 
     /// <summary>

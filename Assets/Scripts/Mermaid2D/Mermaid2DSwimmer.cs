@@ -41,6 +41,14 @@ public class Mermaid2DSwimmer : MonoBehaviour
     [System.NonSerialized] public Transform faceGroup;
 
     /// <summary>
+    /// Extra nose-up rotation (degrees) applied to the head BONE but fully compensated on
+    /// the face — tilts her whole body (neck, torso, tail hang down-behind) without moving
+    /// her gaze. Driven by <see cref="MermaidSurfaceTrip"/> so she treads water vertically
+    /// with just her face above the surface.
+    /// </summary>
+    [System.NonSerialized] public float bodyTiltDeg;
+
+    /// <summary>
     /// Virtual swim velocity in world space — what hair/tail/seaweed should react to.
     /// Non-zero even though she stays in place (treadmill illusion).
     /// </summary>
@@ -96,13 +104,15 @@ public class Mermaid2DSwimmer : MonoBehaviour
         float pitchDeg = swimPitchDeg - lookDownDeg;
 
         transform.position = basePos + Vector3.up * yOffset + (Vector3)forageBodyOffsetWorld;
-        transform.rotation = Quaternion.Euler(0f, 0f, pitchDeg);
+        transform.rotation = Quaternion.Euler(0f, 0f, pitchDeg + bodyTiltDeg);
 
-        // Gaze: counter-rotate ONLY the swim-pitch part on the face visuals, so her eyes
-        // keep pointing where she's going while the bone still whips the body wave. The
-        // lookDown part passes through untouched — rummaging still turns her face to her hands.
+        // Gaze: counter-rotate the swim-pitch part AND the whole body tilt on the face
+        // visuals, so her eyes keep pointing where she's going while the bone still whips
+        // the body wave (and can hang the body vertically at the surface). The lookDown
+        // part passes through untouched — rummaging still turns her face to her hands.
         if (faceGroup != null)
-            faceGroup.localRotation = Quaternion.Euler(0f, 0f, -swimPitchDeg * Mathf.Clamp01(gazeStabilization));
+            faceGroup.localRotation = Quaternion.Euler(0f, 0f,
+                -(swimPitchDeg * Mathf.Clamp01(gazeStabilization) + bodyTiltDeg));
 
         // Forward virtual flow fades with motionScale so hair/tail/scroll settle when she stops.
         SwimVelocity = new Vector2(cruiseSpeed * m, vy);

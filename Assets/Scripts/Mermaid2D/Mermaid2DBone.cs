@@ -66,6 +66,20 @@ public class Mermaid2DBone : MonoBehaviour
         vel = Vector3.zero;
     }
 
+    /// <summary>
+    /// Where this bone's UNSHIFTED ideal sits right now (anchor pose + rest offset, before
+    /// reachOffsetWorld). Lets a driver pin the bone to a fixed WORLD point by setting
+    /// reachOffsetWorld = worldPoint - NaturalIdealPosition() each frame.
+    /// </summary>
+    public Vector3 NaturalIdealPosition()
+    {
+        if (!initialized) Initialize();
+        if (anchor == null) return transform.position;
+        Vector3 p = anchor.TransformPoint(localOffset);
+        p.z = 0f;
+        return p;
+    }
+
     static Vector2 Rotate(Vector2 v, float degrees)
     {
         float rad = degrees * Mathf.Deg2Rad;
