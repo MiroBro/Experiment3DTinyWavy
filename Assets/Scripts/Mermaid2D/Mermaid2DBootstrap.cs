@@ -37,6 +37,9 @@ public class Mermaid2DBootstrap : MonoBehaviour
     public float porpoiseAmplitude = 0.29f;
     public float porpoiseFrequency = 0.83f;
     public float cruiseSpeed = 3f;
+    [Tooltip("How much her face counter-rotates against the swim pitch so her eyes keep pointing where she's swimming. 0 = face rides the bob fully (old look), 1 = gaze locked level. The forage look-down still comes through — she always turns her face to her rummaging hands.")]
+    [Range(0f, 1f)]
+    public float gazeStabilization = 0.85f;
 
     [Header("Bone Lag (live-editable)")]
     [Tooltip("Multiplies every per-bone smoothTime.")]
@@ -820,6 +823,19 @@ public class Mermaid2DBootstrap : MonoBehaviour
         scalpGO.transform.localPosition = (Vector3)hairRootOffset;
         headScalp = scalpGO.transform;
 
+        // Face group: holds the visual face (head sprite, features, crown). The swimmer
+        // counter-rotates it against the swim pitch so her gaze stays pointed where she's
+        // swimming, while the head BONE keeps the full pitch that whips the body wave.
+        // Hair (scalp + volume blob) deliberately stays on the bone and rides the bob.
+        var faceGO = new GameObject("FaceGroup");
+        faceGO.transform.SetParent(headBone, false);
+        Transform faceGroup = faceGO.transform;
+        if (swimmer != null)
+        {
+            swimmer.faceGroup = faceGroup;
+            swimmer.gazeStabilization = gazeStabilization;
+        }
+
         // The head is ALWAYS a SpriteRenderer, so you can paint one in Photoshop and just
         // swap it (drag a PNG into headTexture on this component, or a Sprite into
         // headSprite — or even directly onto the HeadSprite object's SpriteRenderer).
@@ -827,7 +843,7 @@ public class Mermaid2DBootstrap : MonoBehaviour
         var headArt = SpriteArt(headSprite, headTexture);
         bool customHead = headArt != null;
         if (!customHead) headArt = CircleSprite();
-        MakeSpriteFit("HeadSprite", headBone, Vector2.zero, headArt, customHead ? 0.62f : 0.60f,
+        MakeSpriteFit("HeadSprite", faceGroup, Vector2.zero, headArt, customHead ? 0.62f : 0.60f,
             customHead ? Color.white : skinColor, OrderHead);
 
         if (!customHead)
@@ -835,21 +851,21 @@ public class Mermaid2DBootstrap : MonoBehaviour
             // Face: tilted almond eye + brow + a hint of lips (side view shows one of each).
             // Skipped entirely when you provide painted head art (paint the face in).
             var eyeCol = new Color(0.05f, 0.025f, 0.02f);
-            var eye = MakeDisc("Eye", headBone, new Vector2(0.16f, 0.04f), 1f, eyeCol, OrderFace);
+            var eye = MakeDisc("Eye", faceGroup, new Vector2(0.16f, 0.04f), 1f, eyeCol, OrderFace);
             eye.transform.localScale = new Vector3(0.058f, 0.028f, 1f);
             eye.transform.localRotation = Quaternion.Euler(0f, 0f, 8f);
 
-            MakeQuad("Brow", headBone, new Vector2(0.165f, 0.135f), new Vector2(0.13f, 0.024f), 10f,
+            MakeQuad("Brow", faceGroup, new Vector2(0.165f, 0.135f), new Vector2(0.13f, 0.024f), 10f,
                 new Color(0.12f, 0.05f, 0.04f), OrderFace);
 
-            var lips = MakeDisc("Lips", headBone, new Vector2(0.275f, -0.075f), 1f,
+            var lips = MakeDisc("Lips", faceGroup, new Vector2(0.275f, -0.075f), 1f,
                 new Color(0.62f, 0.22f, 0.16f), OrderFace);
             lips.transform.localScale = new Vector3(0.035f, 0.02f, 1f);
         }
 
         if (goldJewelry)
         {
-            BuildCrown(headBone);
+            BuildCrown(faceGroup);
             BuildNecklace();
         }
     }
@@ -1331,6 +1347,7 @@ public class Mermaid2DBootstrap : MonoBehaviour
             swimmer.porpoiseAmplitude = porpoiseAmplitude;
             swimmer.porpoiseFrequency = porpoiseFrequency;
             swimmer.cruiseSpeed = cruiseSpeed;
+            swimmer.gazeStabilization = gazeStabilization;
         }
 
         // 3. Live joint constraints.

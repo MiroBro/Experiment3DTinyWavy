@@ -28,6 +28,18 @@ public class Mermaid2DSwimmer : MonoBehaviour
     [Tooltip("Extra downward head pitch (degrees) added on top of the swim pose, driven by the forager. The neck/torso follow with the chain's lag, so her upper body curls to look down at her hands.")]
     public float lookDownDeg = 0f;
 
+    [Header("Gaze")]
+    [Tooltip("How much the face counter-rotates against the swim pitch so she keeps looking where she's swimming. 0 = face rides the bob fully, 1 = gaze locked level. Forage look-down is never compensated — she still looks at her hands.")]
+    [Range(0f, 1f)]
+    public float gazeStabilization = 0.85f;
+
+    /// <summary>
+    /// The visual face parts (head sprite, eye, brow, lips, crown) — a child of the head
+    /// bone, counter-rotated so her gaze stays forward while the BONE keeps the full swim
+    /// pitch that drives the neck/body wave. Assigned by the bootstrap.
+    /// </summary>
+    [System.NonSerialized] public Transform faceGroup;
+
     /// <summary>
     /// Virtual swim velocity in world space — what hair/tail/seaweed should react to.
     /// Non-zero even though she stays in place (treadmill illusion).
@@ -77,10 +89,17 @@ public class Mermaid2DSwimmer : MonoBehaviour
         float vy = Mathf.Cos(porpoisePhase) * porpoiseAmplitude * ampScale * omega;
 
         // Facing +X: rising = nose up = positive Z rotation. lookDown tips the nose down.
-        float pitchDeg = Mathf.Atan2(vy, Mathf.Max(0.01f, cruiseSpeed)) * Mathf.Rad2Deg * m - lookDownDeg;
+        float swimPitchDeg = Mathf.Atan2(vy, Mathf.Max(0.01f, cruiseSpeed)) * Mathf.Rad2Deg * m;
+        float pitchDeg = swimPitchDeg - lookDownDeg;
 
         transform.position = basePos + Vector3.up * yOffset + (Vector3)forageBodyOffsetWorld;
         transform.rotation = Quaternion.Euler(0f, 0f, pitchDeg);
+
+        // Gaze: counter-rotate ONLY the swim-pitch part on the face visuals, so her eyes
+        // keep pointing where she's going while the bone still whips the body wave. The
+        // lookDown part passes through untouched — rummaging still turns her face to her hands.
+        if (faceGroup != null)
+            faceGroup.localRotation = Quaternion.Euler(0f, 0f, -swimPitchDeg * Mathf.Clamp01(gazeStabilization));
 
         // Forward virtual flow fades with motionScale so hair/tail/scroll settle when she stops.
         SwimVelocity = new Vector2(cruiseSpeed * m, vy);
