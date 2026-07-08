@@ -73,9 +73,21 @@ public class GemGameManager : MonoBehaviour
         forager.gameManager = this;
         defaultMinCruise = forager.minCruise;
         defaultMaxCruise = forager.maxCruise;
+        EnsureSurfaceTripExists();   // the boat lives on the surface full-time, trailing her
         ApplyLocationVisuals();
         ApplyEquippedCosmetics();
         onStateChanged?.Invoke();
+    }
+
+    void EnsureSurfaceTripExists()
+    {
+        if (surfaceTrip != null || forager == null || forager.swimmer == null) return;
+        var go = new GameObject("MermaidSurfaceTrip");
+        surfaceTrip = go.AddComponent<MermaidSurfaceTrip>();
+        surfaceTrip.manager = this;
+        surfaceTrip.forager = forager;
+        surfaceTrip.swimmer = forager.swimmer;
+        ApplySurfaceTripSettings(true);
     }
 
     static void EnsureEventSystem()
@@ -381,14 +393,8 @@ public class GemGameManager : MonoBehaviour
         if (forager == null || forager.swimmer == null) return;
         if (surfaceTrip != null && surfaceTrip.CanDive) { surfaceTrip.RequestDive(); return; }
         if (surfaceTrip != null && surfaceTrip.IsActive) return;   // already descending
-        if (surfaceTrip == null)
-        {
-            var go = new GameObject("MermaidSurfaceTrip");
-            surfaceTrip = go.AddComponent<MermaidSurfaceTrip>();
-            surfaceTrip.manager = this;
-            surfaceTrip.forager = forager;
-            surfaceTrip.swimmer = forager.swimmer;
-        }
+        EnsureSurfaceTripExists();
+        if (surfaceTrip == null) return;
         ApplySurfaceTripSettings(true);
         surfaceTrip.Begin();
     }
@@ -399,8 +405,8 @@ public class GemGameManager : MonoBehaviour
     // the runtime MermaidSurfaceTrip component, which made those edits look dead.
     struct TripCfg
     {
-        public float y, offX, trail, catchUp, lift, motion, tilt, ascend, stay,
-                     diveFwd, diveArc, diveDepth, diveTime;
+        public float y, offX, rowSpeed, catchUp, current, lift, motion, tilt, ascend, stay,
+                     diveFwd, diveArc, diveDepth, diveTime, diveGlide;
         public bool stayUntilDive;
     }
     TripCfg _lastTripCfg;
@@ -412,9 +418,10 @@ public class GemGameManager : MonoBehaviour
         var cfg = new TripCfg
         {
             y = bootstrap.surfaceY,
-            offX = bootstrap.surfaceBoatOffsetX,
-            trail = bootstrap.surfaceBoatTrailDistance,
+            offX = bootstrap.surfaceBoatFollowOffset,
+            rowSpeed = bootstrap.surfaceBoatRowSpeed,
             catchUp = bootstrap.surfaceBoatCatchUpTime,
+            current = bootstrap.seaweedScrollScale,   // boat drifts with the same current as the grass
             lift = bootstrap.surfaceHeadLift,
             motion = bootstrap.surfaceMotionScale,
             tilt = bootstrap.surfaceBodyTiltDeg,
@@ -424,6 +431,7 @@ public class GemGameManager : MonoBehaviour
             diveArc = bootstrap.surfaceDiveArcHeight,
             diveDepth = bootstrap.surfaceDiveDepth,
             diveTime = bootstrap.surfaceDiveTime,
+            diveGlide = bootstrap.surfaceDiveGlideTime,
             stayUntilDive = bootstrap.surfaceStayUntilDive,
         };
         if (!force && _tripCfgValid && cfg.Equals(_lastTripCfg)) return;
@@ -432,8 +440,9 @@ public class GemGameManager : MonoBehaviour
 
         surfaceTrip.surfaceY = cfg.y;
         surfaceTrip.boatOffsetX = cfg.offX;
-        surfaceTrip.boatTrailDistance = cfg.trail;
+        surfaceTrip.boatRowSpeed = cfg.rowSpeed;
         surfaceTrip.boatCatchUpTime = cfg.catchUp;
+        surfaceTrip.waterCurrentScale = cfg.current;
         surfaceTrip.surfaceHeadLift = cfg.lift;
         surfaceTrip.surfaceMotionScale = cfg.motion;
         surfaceTrip.surfaceBodyTiltDeg = cfg.tilt;
@@ -444,6 +453,7 @@ public class GemGameManager : MonoBehaviour
         surfaceTrip.diveArcHeight = cfg.diveArc;
         surfaceTrip.diveDepth = cfg.diveDepth;
         surfaceTrip.diveArcTime = cfg.diveTime;
+        surfaceTrip.diveGlideTime = cfg.diveGlide;
     }
 
     /// <summary>

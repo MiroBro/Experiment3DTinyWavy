@@ -19,8 +19,12 @@ public class MermaidSurfaceTrip : MonoBehaviour
     [Header("Surface")]
     [Tooltip("World Y of the waterline she surfaces to.")]
     public float surfaceY = 5f;
-    [Tooltip("The boat floats this far ahead (+X) of where she pops up.")]
-    public float boatOffsetX = 1.7f;
+    [Tooltip("Where the boat tries to sit relative to her, in X. NEGATIVE = trailing behind her (screen-left). It follows her at all times.")]
+    public float boatOffsetX = -1.4f;
+    [Tooltip("The crow's top rowing speed, world units/sec. Below her swim speed = the gap grows while she cruises and closes when she slows or surfaces.")]
+    public float boatRowSpeed = 2.5f;
+    [Tooltip("How strongly the treadmill current drags the boat backward while she swims (kept in sync with the seaweed scroll so boat and ground drift together).")]
+    public float waterCurrentScale = 0.5f;
     [Tooltip("SmoothDamp time for the swim up / down. Bigger = a longer, lazier ascent.")]
     public float ascendSmoothTime = 0.9f;
     [Tooltip("Stay at the surface until the player presses Dive (surfaceStayTime is ignored).")]
@@ -37,9 +41,7 @@ public class MermaidSurfaceTrip : MonoBehaviour
     [Tooltip("Nose-up body tilt at the surface, degrees: torso and tail hang down underwater while only her face is out. Her face stays level — the tilt is gaze-compensated.")]
     [Range(0f, 85f)]
     public float surfaceBodyTiltDeg = 58f;
-    [Tooltip("The boat starts this far off and rows in to meet her each trip.")]
-    public float boatTrailDistance = 2.6f;
-    [Tooltip("SmoothDamp time for the boat's catch-up glide. Small = it arrives briskly.")]
+    [Tooltip("SmoothDamp time for the boat's rowing. Small = it responds briskly.")]
     public float boatCatchUpTime = 0.7f;
 
     [Header("Dive (the dolphin arc back under)")]
@@ -51,6 +53,8 @@ public class MermaidSurfaceTrip : MonoBehaviour
     public float diveDepth = 1.6f;
     [Tooltip("Seconds the dive arc takes, crest to splash.")]
     public float diveArcTime = 2f;
+    [Tooltip("After the splash: how long the dive's forward momentum carries before she settles back over her spot. Bigger = a longer, faster-feeling glide out of the dive.")]
+    public float diveGlideTime = 1.8f;
 
     enum Phase { Idle, Ascend, Surface, Dive, Recover }
     Phase phase = Phase.Idle;
@@ -122,17 +126,15 @@ public class MermaidSurfaceTrip : MonoBehaviour
         phase = Phase.Ascend;
         phaseT = 0f;
         EnsureSurfaceSet();
-
-        // The boat trails her: it starts off to the side and rows in while she ascends,
-        // arriving just after she pops up.
-        boatTargetX = swimmer.transform.position.x + boatOffsetX;
-        boatBasePos = new Vector3(boatTargetX + boatTrailDistance, surfaceY, 0f);
-        boatXVel = 0f;
+        // No boat repositioning here — it lives on the surface full-time, trailing her,
+        // and simply closes the last gap while she ascends.
     }
 
     void Update()
     {
         float dt = Time.deltaTime;
+        // The boat lives on the surface full-time, trailing her — build the set up front.
+        if (surfaceSet == null && swimmer != null) EnsureSurfaceSet();
         if (phase != Phase.Idle && swimmer != null)
         {
             phaseT += dt;
@@ -191,13 +193,21 @@ public class MermaidSurfaceTrip : MonoBehaviour
                 }
 
                 case Phase.Recover:
-                    // Underwater: glide from the splash point back to the forager's cruise
-                    // pose (the momentum from the dive carries into the SmoothDamp).
+                    // Momentum glide out of the splash: Y settles onto the cruise line
+                    // fairly quickly, but the FORWARD offset bleeds back much more slowly —
+                    // she coasts forward into her swim instead of braking like she hit a
+                    // wall (the old single-target damp pulled her hard backwards, which
+                    // compressed the whole body like a ribbon).
                     float cruiseLift = forager != null ? forager.cruiseLift : 1.2f;
-                    Drive(Vector2.up * cruiseLift, 0f, 0f, 1f, dt);
+                    offset.x = Mathf.SmoothDamp(offset.x, 0f, ref offsetVel.x,
+                        Mathf.Max(0.3f, diveGlideTime), Mathf.Infinity, dt);
+                    offset.y = Mathf.SmoothDamp(offset.y, cruiseLift, ref offsetVel.y, 1.1f, Mathf.Infinity, dt);
+                    swimmer.forageBodyOffsetWorld = offset;
+                    DrivePose(0f, 0f, 1f, dt);
                     // Hand back to the forager only once we're essentially AT its cruise
                     // pose — a bigger tolerance here made the handoff visibly snap.
-                    if ((offset - Vector2.up * cruiseLift).magnitude < 0.06f && Mathf.Abs(swimmer.bodyTiltDeg) < 3f)
+                    if (Mathf.Abs(offset.y - cruiseLift) < 0.05f && Mathf.Abs(offset.x) < 0.08f
+                        && Mathf.Abs(swimmer.bodyTiltDeg) < 3f)
                     {
                         phase = Phase.Idle;
                         if (forager != null) forager.suspended = false;
@@ -219,6 +229,12 @@ public class MermaidSurfaceTrip : MonoBehaviour
     {
         offset = Vector2.SmoothDamp(offset, targetOffset, ref offsetVel, ascendSmoothTime, Mathf.Infinity, dt);
         swimmer.forageBodyOffsetWorld = offset;
+        DrivePose(lookDownTarget, tiltTarget, motion, dt);
+    }
+
+    // Angles + motion + reach fade, shared by every phase regardless of how the offset moves.
+    void DrivePose(float lookDownTarget, float tiltTarget, float motion, float dt)
+    {
         // Everything eases — instant motionScale jumps popped the bob amplitude mid-wave.
         swimmer.motionScale = Mathf.SmoothDamp(swimmer.motionScale, motion, ref motionVel, 0.4f, Mathf.Infinity, dt);
         swimmer.lookDownDeg = Mathf.SmoothDamp(swimmer.lookDownDeg, lookDownTarget, ref lookVel, 0.5f, Mathf.Infinity, dt);
@@ -311,15 +327,16 @@ public class MermaidSurfaceTrip : MonoBehaviour
         // Hull: deck-wide, keel-narrow trapezoid hanging just below the waterline.
         MakeTrapezoid(boat, "Hull", 0.78f, 0.46f, 0.30f, wood, -45);
         MakeQuadObj(boat, "Gunwale", new Vector3(0f, 0.03f, 0f), new Vector2(1.60f, 0.07f), woodLight, woodLight, -44);
-        MakeQuadObj(boat, "Mast", new Vector3(0.30f, 0.38f, 0f), new Vector2(0.05f, 0.66f), wood, wood, -46);
-        MakeTri(boat, "Pennant", new Vector3(0.325f, 0.66f, 0f),
+        MakeQuadObj(boat, "Mast", new Vector3(-0.30f, 0.38f, 0f), new Vector2(0.05f, 0.66f), wood, wood, -46);
+        MakeTri(boat, "Pennant", new Vector3(-0.325f, 0.66f, 0f),
             new Vector2(0f, 0.05f), new Vector2(0f, -0.05f), new Vector2(-0.26f, 0f),
             new Color(0.85f, 0.25f, 0.20f), -46);
 
-        // The crow, perched on the bow (facing the mermaid, -X).
+        // The crow, perched on the bow — the boat trails BEHIND her now, so the bow is the
+        // +X end and the crow faces +X, toward the mermaid ahead.
         var crowGO = new GameObject("Crow");
         crowGO.transform.SetParent(boat, false);
-        crowBasePos = new Vector3(-0.52f, 0.16f, 0f);
+        crowBasePos = new Vector3(0.52f, 0.16f, 0f);
         crowGO.transform.localPosition = crowBasePos;
         crow = crowGO.transform;
 
@@ -327,14 +344,14 @@ public class MermaidSurfaceTrip : MonoBehaviour
         var body = MakeDiscObj(crow, "Body", feather, -43, 1f);
         body.transform.localScale = new Vector3(0.16f, 0.115f, 1f);
         var head = MakeDiscObj(crow, "Head", feather, -43, 0.075f);
-        head.transform.localPosition = new Vector3(-0.11f, 0.10f, 0f);
-        MakeTri(crow, "Beak", new Vector3(-0.17f, 0.095f, 0f),
-            new Vector2(0f, 0.028f), new Vector2(0f, -0.028f), new Vector2(-0.09f, 0.006f),
+        head.transform.localPosition = new Vector3(0.11f, 0.10f, 0f);
+        MakeTri(crow, "Beak", new Vector3(0.17f, 0.095f, 0f),
+            new Vector2(0f, 0.028f), new Vector2(0f, -0.028f), new Vector2(0.09f, 0.006f),
             new Color(0.95f, 0.62f, 0.18f), -42);
         var eye = MakeDiscObj(crow, "Eye", new Color(0.9f, 0.85f, 0.7f), -42, 0.016f);
-        eye.transform.localPosition = new Vector3(-0.125f, 0.115f, 0f);
-        MakeTri(crow, "Tail", new Vector3(0.13f, 0.03f, 0f),
-            new Vector2(0f, 0.035f), new Vector2(0f, -0.02f), new Vector2(0.13f, 0.05f),
+        eye.transform.localPosition = new Vector3(0.125f, 0.115f, 0f);
+        MakeTri(crow, "Tail", new Vector3(-0.13f, 0.03f, 0f),
+            new Vector2(0f, 0.035f), new Vector2(0f, -0.02f), new Vector2(-0.13f, 0.05f),
             feather, -43);
     }
 
@@ -344,16 +361,24 @@ public class MermaidSurfaceTrip : MonoBehaviour
         float t = Time.time;
 
         // Everything re-derives from the LIVE settings each frame, so tuning surfaceY /
-        // boat offset on Bootstrap2D during play moves the whole set immediately. The boat
-        // chases her actual head X with catch-up lag — so it visibly trails her dive lunge.
+        // boat offset on Bootstrap2D during play moves the whole set immediately.
         if (swimmer != null) boatTargetX = swimmer.transform.position.x + boatOffsetX;
         boatBasePos.y = surfaceY;
         if (sky != null) sky.position = new Vector3(sky.position.x, surfaceY + 4f, 0f);
         if (waterline != null) waterline.position = new Vector3(waterline.position.x, surfaceY, 0f);
 
-        // Catch-up glide toward its spot beside her (also drifts home after a trip).
+        // Boat "physics": the treadmill current drags it backward exactly like the ground
+        // scroll (same motionScale remap the seaweed uses), while the crow rows it toward
+        // its spot behind her at a capped speed. Fast mermaid → the gap grows; she slows or
+        // surfaces → the current dies and the boat catches up, still sitting behind her.
+        if (swimmer != null)
+        {
+            float t01 = Mathf.Clamp01((swimmer.motionScale - 0.6f) / 0.37f);
+            float ease = t01 * t01 * (3f - 2f * t01);
+            boatBasePos.x -= swimmer.cruiseSpeed * waterCurrentScale * ease * dt;
+        }
         boatBasePos.x = Mathf.SmoothDamp(boatBasePos.x, boatTargetX, ref boatXVel,
-            Mathf.Max(0.05f, boatCatchUpTime), Mathf.Infinity, dt);
+            Mathf.Max(0.05f, boatCatchUpTime), Mathf.Max(0.1f, boatRowSpeed), dt);
         boat.position = boatBasePos + Vector3.up * (0.045f * Mathf.Sin(t * 1.2f));
         boat.rotation = Quaternion.Euler(0f, 0f, 2.6f * Mathf.Sin(t * 0.8f + 1f));
 
