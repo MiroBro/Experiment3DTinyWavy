@@ -18,8 +18,21 @@ public class Mermaid2DBone : MonoBehaviour
     [Tooltip("Bend cone: if > 0, the direction (anchor -> this bone) is clamped to within this many degrees of the rest direction.")]
     public float maxBendAngleDeg = 0f;
 
+    [Tooltip("How briskly constraint violations are corrected, per second. Higher = firmer limits; the correction is exponential rather than an instant snap, so fast pose changes stay smooth instead of stuttering at the cone edge.")]
+    public float clampSoftness = 18f;
+
     [Tooltip("If true, the bone is forced to stay at its rest distance from the anchor (no rubber-band stretching).")]
     public bool enforceRestDistance = true;
+
+    /// <summary>
+    /// Optional elbow-style hinge: when set (with <see cref="hingeSign"/> != 0), the joint
+    /// angle between (hingeRoot -> anchor) and (anchor -> this bone) may not fold past
+    /// <see cref="hingeMinRelBendDeg"/> on the wrong side — like a real elbow that bends one
+    /// way only. Assigned at build time (hand bones get the shoulder as hingeRoot).
+    /// </summary>
+    [System.NonSerialized] public Transform hingeRoot;
+    [System.NonSerialized] public float hingeSign;
+    [System.NonSerialized] public float hingeMinRelBendDeg = 8f;
 
     /// <summary>
     /// Optional circle colliders this bone is pushed out of after its position is computed.
@@ -118,9 +131,34 @@ public class Mermaid2DBone : MonoBehaviour
             float angle = Vector2.SignedAngle(restDirVec, currentDirVec);
             if (Mathf.Abs(angle) > maxBendAngleDeg)
             {
+                // Exponential correction toward the cone edge (an instant snap + velocity
+                // zero here made whole-body pose changes visibly stutter).
                 Vector2 clampedDir = Rotate(restDirVec / restDirLen, Mathf.Sign(angle) * maxBendAngleDeg);
-                newPos = anchorPos + (Vector3)(clampedDir * currentLen);
-                vel = Vector3.zero;
+                Vector3 clampedPos = anchorPos + (Vector3)(clampedDir * currentLen);
+                float blend = 1f - Mathf.Exp(-dt * Mathf.Max(1f, clampSoftness));
+                newPos = Vector3.Lerp(newPos, clampedPos, blend);
+                vel *= 1f - blend;
+            }
+        }
+
+        // Elbow hinge: forbid folding past straight on the anatomically wrong side.
+        if (hingeSign != 0f && hingeRoot != null)
+        {
+            Vector2 upper = (Vector2)(anchorPos - hingeRoot.position);
+            Vector2 fore = (Vector2)(newPos - anchorPos);
+            if (upper.sqrMagnitude > 1e-6f && fore.sqrMagnitude > 1e-6f)
+            {
+                float rel = Vector2.SignedAngle(upper, fore);
+                bool wrongWay = hingeSign > 0f ? rel < hingeMinRelBendDeg : rel > -hingeMinRelBendDeg;
+                if (wrongWay)
+                {
+                    float targetRel = hingeSign > 0f ? hingeMinRelBendDeg : -hingeMinRelBendDeg;
+                    Vector2 dir = Rotate(upper.normalized, targetRel);
+                    Vector3 hingedPos = anchorPos + (Vector3)(dir * fore.magnitude);
+                    float blend = 1f - Mathf.Exp(-dt * Mathf.Max(1f, clampSoftness));
+                    newPos = Vector3.Lerp(newPos, hingedPos, blend);
+                    vel *= 1f - blend;
+                }
             }
         }
 

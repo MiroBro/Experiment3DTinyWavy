@@ -33,9 +33,12 @@ public class Mermaid2DForager : MonoBehaviour
     public float reachDown = 1.1f;
     [Tooltip("Forward reach so the dig happens UNDER HER FACE rather than under her belly.")]
     public float reachForward = 1.4f;
-    [Tooltip("Elbows follow the reach at this fraction of the hands, for a natural arm line.")]
+    [Tooltip("Elbows follow the DOWNWARD reach at this fraction of the hands, for a natural arm line.")]
     [Range(0f, 1f)]
     public float elbowReachFraction = 0.6f;
+    [Tooltip("Elbows follow the FORWARD reach only this much — kept small so the elbow stays behind the hand and the arm bends the natural way (a big value shoves the elbow past the hand and the arm kinks backwards).")]
+    [Range(0f, 1f)]
+    public float elbowForwardFraction = 0.22f;
     [Tooltip("Pin her hands to the SPOT ON THE GROUND where the dig started, instead of letting them ride up and down with the body bob. 1 = firmly planted (the body undulates above steady hands), 0 = old floating behavior.")]
     [Range(0f, 1f)]
     public float handGroundPin = 1f;
@@ -265,7 +268,10 @@ public class Mermaid2DForager : MonoBehaviour
         }
 
         // Elbows keep the softer body-relative reach — they're allowed to undulate a little.
-        Vector2 elbowDip = dip * elbowReachFraction;
+        // Down and forward follow separately: full-ish down, only a little forward, so the
+        // elbow stays BEHIND the hand and the arm folds the natural way.
+        Vector2 elbowDip = (down * (reachDown * elbowReachFraction)
+                          + fwd * (reachForward * elbowForwardFraction)) * eased;
         if (elbowNear != null) elbowNear.reachOffsetWorld = elbowDip;
         if (elbowFar != null) elbowFar.reachOffsetWorld = elbowDip;
     }

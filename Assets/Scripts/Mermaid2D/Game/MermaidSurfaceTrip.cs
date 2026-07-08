@@ -23,7 +23,9 @@ public class MermaidSurfaceTrip : MonoBehaviour
     public float boatOffsetX = 1.7f;
     [Tooltip("SmoothDamp time for the swim up / down. Bigger = a longer, lazier ascent.")]
     public float ascendSmoothTime = 0.9f;
-    [Tooltip("Seconds she lingers at the surface (extends until all rocks have flown).")]
+    [Tooltip("Stay at the surface until the player presses Dive (surfaceStayTime is ignored).")]
+    public bool stayUntilDive = true;
+    [Tooltip("Seconds she lingers at the surface when stayUntilDive is off (extends until all rocks have flown).")]
     public float surfaceStayTime = 3.4f;
     [Tooltip("Seconds after popping up before the rocks fly to the crow.")]
     public float sellDelay = 0.9f;
@@ -47,8 +49,15 @@ public class MermaidSurfaceTrip : MonoBehaviour
     Vector2 offset, offsetVel;
     float lookVel;
     float tiltVel;
+    float motionVel;
+
+    // Rummage reach captured at Begin and faded out — zeroing it instantly teleported the
+    // hand targets, which read as a hitch when the trip started mid-dig.
+    Vector2 fadeHandNear, fadeHandFar, fadeElbowNear, fadeElbowFar;
+    float reachFade;
 
     GameObject surfaceSet;
+    Transform sky, waterline;
     Transform boat;
     Vector3 boatBasePos;
     float boatTargetX, boatXVel;
@@ -81,11 +90,13 @@ public class MermaidSurfaceTrip : MonoBehaviour
         if (forager != null)
         {
             forager.suspended = true;
-            // Release any rummage reach — the bones smooth-damp back to the swim pose.
-            if (forager.handNear != null) forager.handNear.reachOffsetWorld = Vector2.zero;
-            if (forager.handFar != null) forager.handFar.reachOffsetWorld = Vector2.zero;
-            if (forager.elbowNear != null) forager.elbowNear.reachOffsetWorld = Vector2.zero;
-            if (forager.elbowFar != null) forager.elbowFar.reachOffsetWorld = Vector2.zero;
+            // Capture any rummage reach and FADE it out over the ascent start — the hand
+            // targets glide back to the swim pose instead of teleporting.
+            fadeHandNear = forager.handNear != null ? forager.handNear.reachOffsetWorld : Vector2.zero;
+            fadeHandFar = forager.handFar != null ? forager.handFar.reachOffsetWorld : Vector2.zero;
+            fadeElbowNear = forager.elbowNear != null ? forager.elbowNear.reachOffsetWorld : Vector2.zero;
+            fadeElbowFar = forager.elbowFar != null ? forager.elbowFar.reachOffsetWorld : Vector2.zero;
+            reachFade = 1f;
         }
         offset = swimmer.forageBodyOffsetWorld;
         offsetVel = Vector2.zero;
@@ -125,13 +136,19 @@ public class MermaidSurfaceTrip : MonoBehaviour
                     // Treads water: body hangs down at the tilt, face level, eyeing the boat.
                     Drive(new Vector2(0f, surfaceOffsetY), 8f, surfaceBodyTiltDeg, surfaceMotionScale, dt);
                     if (!sold && phaseT >= sellDelay) SellToCrow();
-                    if (phaseT >= surfaceStayTime && flyingRocks.Count == 0) { phase = Phase.Descend; phaseT = 0f; }
+                    if (!stayUntilDive && phaseT >= surfaceStayTime && flyingRocks.Count == 0)
+                    {
+                        phase = Phase.Descend;
+                        phaseT = 0f;
+                    }
                     break;
 
                 case Phase.Descend:
                     float cruiseLift = forager != null ? forager.cruiseLift : 1.2f;
                     Drive(Vector2.up * cruiseLift, 0f, 0f, 1f, dt);
-                    if (Mathf.Abs(offset.y - cruiseLift) < 0.15f)
+                    // Hand back to the forager only once we're essentially AT its cruise
+                    // pose — a bigger tolerance here made the handoff visibly snap.
+                    if (Mathf.Abs(offset.y - cruiseLift) < 0.05f && Mathf.Abs(swimmer.bodyTiltDeg) < 3f)
                     {
                         phase = Phase.Idle;
                         if (forager != null) forager.suspended = false;
@@ -153,9 +170,21 @@ public class MermaidSurfaceTrip : MonoBehaviour
     {
         offset = Vector2.SmoothDamp(offset, targetOffset, ref offsetVel, ascendSmoothTime, Mathf.Infinity, dt);
         swimmer.forageBodyOffsetWorld = offset;
-        swimmer.motionScale = motion;
+        // Everything eases — instant motionScale jumps popped the bob amplitude mid-wave.
+        swimmer.motionScale = Mathf.SmoothDamp(swimmer.motionScale, motion, ref motionVel, 0.4f, Mathf.Infinity, dt);
         swimmer.lookDownDeg = Mathf.SmoothDamp(swimmer.lookDownDeg, lookDownTarget, ref lookVel, 0.5f, Mathf.Infinity, dt);
         swimmer.bodyTiltDeg = Mathf.SmoothDamp(swimmer.bodyTiltDeg, tiltTarget, ref tiltVel, 0.8f, Mathf.Infinity, dt);
+
+        // Fade any captured rummage reach out of the arm bones.
+        if (reachFade > 0f && forager != null)
+        {
+            reachFade = Mathf.Max(0f, reachFade - dt / 0.55f);
+            float f = reachFade * reachFade * (3f - 2f * reachFade);   // smoothstep
+            if (forager.handNear != null) forager.handNear.reachOffsetWorld = fadeHandNear * f;
+            if (forager.handFar != null) forager.handFar.reachOffsetWorld = fadeHandFar * f;
+            if (forager.elbowNear != null) forager.elbowNear.reachOffsetWorld = fadeElbowNear * f;
+            if (forager.elbowFar != null) forager.elbowFar.reachOffsetWorld = fadeElbowFar * f;
+        }
     }
 
     // ---------------------------------------------------------------- selling
@@ -213,12 +242,12 @@ public class MermaidSurfaceTrip : MonoBehaviour
         surfaceSet = new GameObject("SurfaceSet");
 
         // Sky: soft vertical gradient filling the view above the waterline.
-        MakeQuadObj(surfaceSet.transform, "Sky", new Vector3(boatX, surfaceY + 4f, 0f), new Vector2(44f, 8f),
-            new Color(0.55f, 0.78f, 0.88f), new Color(0.74f, 0.90f, 0.98f), -80);
+        sky = MakeQuadObj(surfaceSet.transform, "Sky", new Vector3(boatX, surfaceY + 4f, 0f), new Vector2(44f, 8f),
+            new Color(0.55f, 0.78f, 0.88f), new Color(0.74f, 0.90f, 0.98f), -80).transform;
 
         // The waterline itself: a bright band where sea meets sky.
-        MakeQuadObj(surfaceSet.transform, "Waterline", new Vector3(boatX, surfaceY, 0f), new Vector2(44f, 0.07f),
-            new Color(1f, 1f, 1f, 0.55f), new Color(1f, 1f, 1f, 0.55f), -79);
+        waterline = MakeQuadObj(surfaceSet.transform, "Waterline", new Vector3(boatX, surfaceY, 0f), new Vector2(44f, 0.07f),
+            new Color(1f, 1f, 1f, 0.55f), new Color(1f, 1f, 1f, 0.55f), -79).transform;
 
         // The little rowboat.
         var boatGO = new GameObject("Boat");
@@ -263,6 +292,14 @@ public class MermaidSurfaceTrip : MonoBehaviour
     {
         if (boat == null) return;
         float t = Time.time;
+
+        // Everything re-derives from the LIVE settings each frame, so tuning surfaceY /
+        // boat offset on Bootstrap2D during play moves the whole set immediately.
+        if (swimmer != null && IsActive) boatTargetX = swimmer.transform.position.x + boatOffsetX;
+        boatBasePos.y = surfaceY;
+        if (sky != null) sky.position = new Vector3(sky.position.x, surfaceY + 4f, 0f);
+        if (waterline != null) waterline.position = new Vector3(waterline.position.x, surfaceY, 0f);
+
         // Catch-up glide toward its spot beside her (also drifts home after a trip).
         boatBasePos.x = Mathf.SmoothDamp(boatBasePos.x, boatTargetX, ref boatXVel,
             Mathf.Max(0.05f, boatCatchUpTime), Mathf.Infinity, dt);

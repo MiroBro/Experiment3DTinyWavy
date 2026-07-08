@@ -406,6 +406,7 @@ public class GemGameManager : MonoBehaviour
         surfaceTrip.surfaceMotionScale = bootstrap.surfaceMotionScale;
         surfaceTrip.surfaceBodyTiltDeg = bootstrap.surfaceBodyTiltDeg;
         surfaceTrip.ascendSmoothTime = bootstrap.surfaceAscendSmoothTime;
+        surfaceTrip.stayUntilDive = bootstrap.surfaceStayUntilDive;
         surfaceTrip.surfaceStayTime = bootstrap.surfaceStayTime;
     }
 

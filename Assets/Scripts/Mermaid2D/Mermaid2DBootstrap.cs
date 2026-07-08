@@ -276,7 +276,9 @@ public class Mermaid2DBootstrap : MonoBehaviour
     public float surfaceBodyTiltDeg = 58f;
     [Tooltip("SmoothDamp time for the swim up / down. Bigger = a longer, lazier ascent.")]
     public float surfaceAscendSmoothTime = 0.9f;
-    [Tooltip("Seconds she lingers with the crow (extends until all rocks have flown; Dive cuts it short).")]
+    [Tooltip("Stay at the surface until the player presses Dive. When off she dives by herself after surfaceStayTime.")]
+    public bool surfaceStayUntilDive = true;
+    [Tooltip("Seconds she lingers with the crow when surfaceStayUntilDive is OFF (extends until all rocks have flown).")]
     public float surfaceStayTime = 3.4f;
 
     [Header("Seaweed Motion (live-editable)")]
@@ -714,6 +716,12 @@ public class Mermaid2DBootstrap : MonoBehaviour
             var handMB = hand.GetComponent<Mermaid2DBone>();
             elbowMB.maxBendAngleDeg = elbowMaxBendAngleDeg;
             handMB.maxBendAngleDeg = handMaxBendAngleDeg;
+            // Elbow hinge: at rest the forearm folds +21° CCW from the upper arm, so CCW
+            // is the anatomical direction — the joint may never fold past ~straight the
+            // other way (that's the backwards-elbow look).
+            handMB.hingeRoot = shoulder;
+            handMB.hingeSign = 1f;
+            handMB.hingeMinRelBendDeg = 8f;
             armBoneSet.Add(elbowMB);
             armBoneSet.Add(handMB);
             if (near) { elbowNear = elbowMB; handNear = handMB; }
