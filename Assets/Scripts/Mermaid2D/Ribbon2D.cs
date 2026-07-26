@@ -37,6 +37,8 @@ public class Ribbon2D : MonoBehaviour
     public bool roundCaps = true;
     [Range(2, 12)]
     public int capSegments = 5;
+    [Tooltip("Extra half-width added uniformly along the whole ribbon (world units). Used by the outline system: an outline clone is the same ribbon with extraWidth = stroke width.")]
+    public float extraWidth = 0f;
 
     Mesh mesh;
     Vector3[] center;
@@ -126,7 +128,7 @@ public class Ribbon2D : MonoBehaviour
 
             Vector3 normal = new Vector3(-tan.y, tan.x, 0f);
             float t01 = (float)i / (N - 1);
-            float halfW = Mathf.Max(0.0005f, widthCurve.Evaluate(t01) * widthScale);
+            float halfW = Mathf.Max(0.0005f, widthCurve.Evaluate(t01) * widthScale) + Mathf.Max(0f, extraWidth);
 
             vertsBuf[i * 2] = center[i] + normal * halfW;
             vertsBuf[i * 2 + 1] = center[i] - normal * halfW;
@@ -164,11 +166,12 @@ public class Ribbon2D : MonoBehaviour
         {
             int ti = (N - 1) * 6;
             int v = N * 2;
+            float extra = Mathf.Max(0f, extraWidth);
             ti = BuildCap(v, 0, center[0], center[0] - center[1],
-                widthCurve.Evaluate(0f) * widthScale, Color.Lerp(colorStart, colorEnd, 0f), 0f, cap, ti, colorsDirty);
+                widthCurve.Evaluate(0f) * widthScale + extra, Color.Lerp(colorStart, colorEnd, 0f), 0f, cap, ti, colorsDirty);
             v += cap;
             BuildCap(v, (N - 1) * 2, center[N - 1], center[N - 1] - center[N - 2],
-                widthCurve.Evaluate(1f) * widthScale, Color.Lerp(colorStart, colorEnd, 1f), 1f, cap, ti, colorsDirty);
+                widthCurve.Evaluate(1f) * widthScale + extra, Color.Lerp(colorStart, colorEnd, 1f), 1f, cap, ti, colorsDirty);
         }
 
         // 4) Upload. Full re-upload only when topology changed; otherwise just positions

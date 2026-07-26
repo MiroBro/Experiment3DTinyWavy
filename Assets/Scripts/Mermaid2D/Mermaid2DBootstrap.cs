@@ -164,6 +164,27 @@ public class Mermaid2DBootstrap : MonoBehaviour
     public AnimationCurve armWidthCurve = new AnimationCurve(
         new Keyframe(0f, 0.10f), new Keyframe(0.5f, 0.07f), new Keyframe(1f, 0.05f));
 
+    // ---------------------------------------------------------------- unified outline
+
+    public enum OutlineMode
+    {
+        None,
+        // Every part re-drawn slightly fatter in the stroke color BEHIND all of her —
+        // the copies merge into one union silhouette, so only the outer rim shows.
+        BlackClones,
+        // Renderer feature: her rendered silhouette is dilated in screen space each frame.
+        ScreenSpace,
+    }
+
+    [Header("Unified Outline (live-editable)")]
+    [Tooltip("One thick ink stroke around her WHOLE silhouette, never around individual parts. BlackClones = fattened stroke-colored twins behind her (world-space width, exact for ribbons, scaled approximation for head/hand sprites). ScreenSpace = the MermaidOutlineFeature on the URP renderer dilates her rendered silhouette per frame (pixel-perfect for ANY art, including painted sprites with transparency).")]
+    public OutlineMode outlineMode = OutlineMode.BlackClones;
+    [Tooltip("Stroke thickness in world units. Shared by both modes so you can A/B them at identical thickness.")]
+    [Range(0f, 0.25f)]
+    public float outlineWidth = 0.045f;
+    [Tooltip("Stroke color (alpha respected).")]
+    public Color outlineColor = Color.black;
+
     // ---------------------------------------------------------------- custom art
     // Everything below is optional. Leave a slot empty to keep the procedural look.
     // RULE OF THUMB: parts that DEFORM (torso, tail, flukes, arms, hair, seaweed) take a
@@ -394,6 +415,15 @@ public class Mermaid2DBootstrap : MonoBehaviour
     float[] _hairColliderBaseRadii;    // unmultiplied base radii
     int _hairColliderTailStartIdx = -1;
 
+    // Unified-outline runtime state (BlackClones mode; pruned and re-synced every tick).
+    const string OutlineCloneName = "OutlineClone";
+    class RibbonOutlinePair { public Ribbon2D source; public Ribbon2D clone; public MeshRenderer renderer; }
+    readonly List<RibbonOutlinePair> outlineRibbons = new List<RibbonOutlinePair>();
+    class SpriteOutlinePair { public SpriteRenderer source; public SpriteRenderer clone; }
+    readonly List<SpriteOutlinePair> outlineSprites = new List<SpriteOutlinePair>();
+    class MeshOutlinePair { public Transform source; public Transform clone; public MeshRenderer renderer; public Vector2 meshExtents; }
+    readonly List<MeshOutlinePair> outlineMeshes = new List<MeshOutlinePair>();
+
     Mesh _discMesh;
     Mesh _quadMesh;
 
@@ -420,6 +450,9 @@ public class Mermaid2DBootstrap : MonoBehaviour
     const int OrderFarArm = -15, OrderFarHand = -14, OrderFluke = 0, OrderTail = 1;
     const int OrderHairBlob = 2, OrderTorso = 3, OrderHead = 4, OrderFrontLock = 5;
     const int OrderFace = 6, OrderNearArm = 8, OrderNearHand = 9;
+    // Outline clones sit below EVERY mermaid part (min is far arm -15) but above the back
+    // seaweed (-50), so the union of the fat copies reads as one stroke behind her.
+    const int OrderOutline = -20;
 
     void Awake()
     {
@@ -476,6 +509,9 @@ public class Mermaid2DBootstrap : MonoBehaviour
         hairBones.Clear();
         hairBoneSet.Clear();
         hairRibbons.Clear();
+        outlineRibbons.Clear();
+        outlineSprites.Clear();
+        outlineMeshes.Clear();
         _hairColliderTransforms = null;
         _hairColliderRadii = null;
         _hairColliderBaseRadii = null;
@@ -543,6 +579,7 @@ public class Mermaid2DBootstrap : MonoBehaviour
     void OnDisable()
     {
         UnityEditor.EditorApplication.update -= EditorPreviewTick;
+        MermaidOutlineFeature.Enabled = false;
     }
 
     // Edit-mode animation: run the EXACT same simulation as play mode — live tuning, the
@@ -804,6 +841,155 @@ public class Mermaid2DBootstrap : MonoBehaviour
         BuildHead(headGO.transform);
         BuildHair();
         RebuildHairColliders();
+        EnsureOutlineClones();
+    }
+
+    // ---------------------------------------------------------------- unified outline
+
+    // Idempotent: walks the current build, creates any missing outline twins (BlackClones
+    // mode), and stamps the mermaid rendering-layer bit on every part (ScreenSpace mode).
+    // Called after every build/partial rebuild; per-frame tuning happens in ApplyOutlineTick.
+    void EnsureOutlineClones()
+    {
+        if (root == null) return;
+
+        outlineRibbons.RemoveAll(p => p.source == null || p.clone == null || p.renderer == null);
+        outlineSprites.RemoveAll(p => p.source == null || p.clone == null);
+        outlineMeshes.RemoveAll(p => p.source == null || p.clone == null || p.renderer == null);
+
+        // Deforming parts: every ribbon (torso, neck, tail, flukes, arms, hair) gets an
+        // exact fattened twin — same points/curve, extraWidth = the stroke width.
+        var ribbons = root.GetComponentsInChildren<Ribbon2D>(true);
+        for (int i = 0; i < ribbons.Length; i++)
+        {
+            var src = ribbons[i];
+            if (src.gameObject.name == OutlineCloneName) continue;
+            if (src.transform.Find(OutlineCloneName) != null) continue;
+            var go = new GameObject(OutlineCloneName);
+            go.hideFlags = HideFlags.DontSave;
+            go.transform.SetParent(src.transform, false);
+            var clone = go.AddComponent<Ribbon2D>();
+            var mr = go.GetComponent<MeshRenderer>();
+            mr.sharedMaterial = SpriteMat(Color.white);
+            mr.sortingOrder = OrderOutline;
+            mr.shadowCastingMode = UnityEngine.Rendering.ShadowCastingMode.Off;
+            mr.receiveShadows = false;
+            outlineRibbons.Add(new RibbonOutlinePair { source = src, clone = clone, renderer = mr });
+        }
+
+        // Rigid parts: head + hand sprites get a stroke-colored twin, uniformly scaled up
+        // so the silhouette grows by ~outlineWidth (approximation; exact for convex art).
+        var sprites = root.GetComponentsInChildren<SpriteRenderer>(true);
+        for (int i = 0; i < sprites.Length; i++)
+        {
+            var src = sprites[i];
+            string n = src.gameObject.name;
+            if (n != "HeadSprite" && !n.StartsWith("HandSprite")) continue;
+            if (src.transform.Find(OutlineCloneName) != null) continue;
+            var go = new GameObject(OutlineCloneName);
+            go.hideFlags = HideFlags.DontSave;
+            go.transform.SetParent(src.transform, false);
+            var sr = go.AddComponent<SpriteRenderer>();
+            sr.sprite = src.sprite;
+            sr.color = outlineColor;
+            sr.sortingOrder = OrderOutline;
+            outlineSprites.Add(new SpriteOutlinePair { source = src, clone = sr });
+        }
+
+        // Silhouette-shaping meshes: hair volume blob + crown. Scaled mesh twins.
+        var meshes = root.GetComponentsInChildren<MeshRenderer>(true);
+        for (int i = 0; i < meshes.Length; i++)
+        {
+            var srcMr = meshes[i];
+            string n = srcMr.gameObject.name;
+            if (n != "HairVolume" && n != "Crown") continue;
+            if (srcMr.transform.Find(OutlineCloneName) != null) continue;
+            var mf = srcMr.GetComponent<MeshFilter>();
+            if (mf == null || mf.sharedMesh == null) continue;
+            var go = new GameObject(OutlineCloneName);
+            go.hideFlags = HideFlags.DontSave;
+            go.transform.SetParent(srcMr.transform, false);
+            go.AddComponent<MeshFilter>().sharedMesh = mf.sharedMesh;
+            var mr = go.AddComponent<MeshRenderer>();
+            mr.sharedMaterial = SpriteMat(outlineColor);
+            mr.sortingOrder = OrderOutline;
+            mr.shadowCastingMode = UnityEngine.Rendering.ShadowCastingMode.Off;
+            mr.receiveShadows = false;
+            var ext = mf.sharedMesh.bounds.extents;
+            outlineMeshes.Add(new MeshOutlinePair
+            {
+                source = srcMr.transform,
+                clone = go.transform,
+                renderer = mr,
+                meshExtents = new Vector2(Mathf.Max(1e-4f, ext.x), Mathf.Max(1e-4f, ext.y)),
+            });
+        }
+
+        // ScreenSpace mode: the renderer feature picks her parts up by this rendering-layer
+        // bit (clones too — harmless, they are disabled outside BlackClones mode).
+        var all = root.GetComponentsInChildren<Renderer>(true);
+        for (int i = 0; i < all.Length; i++)
+            all[i].renderingLayerMask |= MermaidOutlineFeature.MermaidRenderingLayer;
+
+        ApplyOutlineTick();
+    }
+
+    // Live outline tuning — every frame in play AND in the animated edit preview.
+    void ApplyOutlineTick()
+    {
+        bool clonesOn = outlineMode == OutlineMode.BlackClones && outlineWidth > 0.0001f;
+
+        for (int i = 0; i < outlineRibbons.Count; i++)
+        {
+            var p = outlineRibbons[i];
+            if (p.source == null || p.clone == null || p.renderer == null) continue;
+            p.clone.enabled = clonesOn;       // skips the clone's mesh rebuild when off
+            p.renderer.enabled = clonesOn;
+            if (!clonesOn) continue;
+            p.clone.points = p.source.points;
+            p.clone.widthCurve = p.source.widthCurve;
+            p.clone.widthScale = p.source.widthScale;
+            p.clone.samples = p.source.samples;
+            p.clone.roundCaps = p.source.roundCaps;
+            p.clone.capSegments = p.source.capSegments;
+            p.clone.extraWidth = outlineWidth;
+            p.clone.colorStart = outlineColor;
+            p.clone.colorEnd = outlineColor;
+        }
+
+        for (int i = 0; i < outlineSprites.Count; i++)
+        {
+            var p = outlineSprites[i];
+            if (p.source == null || p.clone == null) continue;
+            p.clone.enabled = clonesOn;
+            if (!clonesOn) continue;
+            p.clone.sprite = p.source.sprite;
+            p.clone.color = outlineColor;
+            float worldH = p.source.sprite != null
+                ? p.source.sprite.bounds.size.y * Mathf.Abs(p.source.transform.lossyScale.y) : 0f;
+            float f = worldH > 0.0001f ? (worldH + 2f * outlineWidth) / worldH : 1f;
+            p.clone.transform.localScale = new Vector3(f, f, 1f);
+        }
+
+        for (int i = 0; i < outlineMeshes.Count; i++)
+        {
+            var p = outlineMeshes[i];
+            if (p.source == null || p.clone == null || p.renderer == null) continue;
+            p.renderer.enabled = clonesOn;
+            if (!clonesOn) continue;
+            Vector3 lossy = p.source.lossyScale;
+            float ex = Mathf.Abs(lossy.x) * p.meshExtents.x;
+            float ey = Mathf.Abs(lossy.y) * p.meshExtents.y;
+            p.clone.localScale = new Vector3(
+                ex > 1e-4f ? (ex + outlineWidth) / ex : 1f,
+                ey > 1e-4f ? (ey + outlineWidth) / ey : 1f, 1f);
+            if (p.renderer.sharedMaterial != null) p.renderer.sharedMaterial.color = outlineColor;
+        }
+
+        // ScreenSpace mode: push the live config to the renderer feature.
+        MermaidOutlineFeature.Enabled = outlineMode == OutlineMode.ScreenSpace && outlineWidth > 0.0001f;
+        MermaidOutlineFeature.WorldWidth = outlineWidth;
+        MermaidOutlineFeature.StrokeColor = outlineColor;
     }
 
     void BuildTail(Transform hipBone)
@@ -1122,6 +1308,7 @@ public class Mermaid2DBootstrap : MonoBehaviour
 
         BuildHair();
         RebuildHairColliders();
+        EnsureOutlineClones();
     }
 
     void RebuildHairColliders()
@@ -1220,6 +1407,7 @@ public class Mermaid2DBootstrap : MonoBehaviour
         }
 
         RebuildHairColliders();
+        EnsureOutlineClones();
     }
 
     // ---------------------------------------------------------------- build: world
@@ -1495,6 +1683,9 @@ public class Mermaid2DBootstrap : MonoBehaviour
             foragerRef.rummageMotionScale = forageBodyMotionScale;
             foragerRef.handGroundPin = forageHandGroundPin;
         }
+
+        // 5c. Live unified-outline tuning (mode/width/color, both modes).
+        ApplyOutlineTick();
 
         // 6. Live seaweed motion (segments change rebuilds that bed's mesh).
         int swSeg = Mathf.Clamp(seaweedSegments, 2, 24);
