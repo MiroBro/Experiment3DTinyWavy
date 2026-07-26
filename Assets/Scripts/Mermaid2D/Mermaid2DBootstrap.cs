@@ -1305,7 +1305,11 @@ public class Mermaid2DBootstrap : MonoBehaviour
         var field = go.AddComponent<Seaweed2D>();
         field.patchCenterX = spawnPosition.x;
         field.rootY = rootY;
-        field.bladeCount = count;
+        // Wide enough that the ends of the bed never show even fully zoomed out. The passed
+        // counts were tuned for the old 18-wide patch, so scale them up to keep the density.
+        const float PatchWidth = 44f;
+        field.patchWidth = PatchWidth;
+        field.bladeCount = Mathf.RoundToInt(count * PatchWidth / 18f);
         field.brightness = brightness;
         field.seed = seed;
         if (order > 0) field.heightRange = new Vector2(0.62f, 1.05f);

@@ -171,25 +171,30 @@ public class Underwater2DAtmosphere : MonoBehaviour
         spawned.Add(mr.gameObject);
     }
 
+    // How far the ground extends below its top edge (seabedY) and how wide it runs. Both
+    // are made generous so no edge of the earth shows even fully zoomed out.
+    const float SeabedDepth = 60f;
+    const float SeabedSpan = 90f;
+
     void BuildSeabed()
     {
         if (seabedSprite != null)
         {
             // Custom ground art: top edge sits at seabedY, drawn instead of strip + line.
-            var sr = MakeSpriteGO("Seabed", transform, seabedSprite, new Vector2(70f, 6f), Color.white, -60);
-            sr.transform.position = new Vector3(0f, seabedY - 3f, 0f);
+            var sr = MakeSpriteGO("Seabed", transform, seabedSprite, new Vector2(SeabedSpan, SeabedDepth), Color.white, -60);
+            sr.transform.position = new Vector3(0f, seabedY - SeabedDepth * 0.5f, 0f);
             spawned.Add(sr.gameObject);
             return;
         }
 
         Color deepBed = seabedColor * 0.55f; deepBed.a = 1f;
-        var bed = GradientQuad(70f, 6f, deepBed, deepBed, seabedColor, seabedColor);
+        var bed = GradientQuad(SeabedSpan, SeabedDepth, deepBed, deepBed, seabedColor, seabedColor);
         var mrBed = MakeMeshGO("Seabed", transform, bed, -60, Color.white);
-        mrBed.transform.position = new Vector3(0f, seabedY - 3f, 0f);
+        mrBed.transform.position = new Vector3(0f, seabedY - SeabedDepth * 0.5f, 0f);
         spawned.Add(mrBed.gameObject);
 
         Color lineLo = sandLineColor * 0.7f; lineLo.a = 1f;
-        var line = GradientQuad(70f, 0.09f, lineLo, lineLo, sandLineColor, sandLineColor);
+        var line = GradientQuad(SeabedSpan, 0.09f, lineLo, lineLo, sandLineColor, sandLineColor);
         var mrLine = MakeMeshGO("SandLine", transform, line, -59, Color.white);
         mrLine.transform.position = new Vector3(0f, seabedY + 0.045f, 0f);
         spawned.Add(mrLine.gameObject);

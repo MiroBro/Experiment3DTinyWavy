@@ -84,9 +84,10 @@ public class MermaidSurfaceTrip : MonoBehaviour
     float crowFlap;
     int crowFacing = 1;   // +1 = faces +X (toward a mermaid ahead of the boat), -1 = faces -X
 
-    class FlyingRock { public Transform t; public Vector3 from, to; public float u; }
+    class FlyingRock { public Transform t; public Vector3 from, to; public Transform target; public float u; }
     readonly List<FlyingRock> flyingRocks = new List<FlyingRock>();
     const float RockFlightTime = 0.7f;
+    const float BoatEdgeMargin = 1.2f;   // keep the boat this far inside the view's left edge
 
     static Mesh _disc, _quad;
 
@@ -158,8 +159,11 @@ public class MermaidSurfaceTrip : MonoBehaviour
                 case Phase.Surface:
                     // Treads water: body hangs down at the tilt, face level, eyeing the boat.
                     Drive(new Vector2(0f, surfaceOffsetY), 8f, surfaceBodyTiltDeg, surfaceMotionScale, dt);
-                    if (!sold && phaseT >= sellDelay) SellToCrow();
-                    if (!stayUntilDive && phaseT >= surfaceStayTime && flyingRocks.Count == 0)
+                    // Don't hand over the rocks until the boat has actually rowed around in
+                    // FRONT of her (the crow is docked and waiting), so she isn't tossing them
+                    // at empty water behind her.
+                    if (!sold && phaseT >= sellDelay && BoatDockedInFront()) SellToCrow();
+                    if (!stayUntilDive && phaseT >= surfaceStayTime && sold && flyingRocks.Count == 0)
                         EnterDive();
                     break;
 
@@ -273,6 +277,16 @@ public class MermaidSurfaceTrip : MonoBehaviour
 
     // ---------------------------------------------------------------- selling
 
+    // True once the boat has rowed around to the trade/dock spot in FRONT of her, so the crow
+    // is docked and waiting — she holds the rocks until then rather than tossing them behind.
+    bool BoatDockedInFront()
+    {
+        if (boat == null || swimmer == null) return true;   // no set built yet — don't block
+        float dockX = swimmer.transform.position.x + boatDockOffsetX;
+        return boat.position.x >= swimmer.transform.position.x
+            && Mathf.Abs(boat.position.x - dockX) < 0.7f;
+    }
+
     void SellToCrow()
     {
         sold = true;
@@ -283,13 +297,16 @@ public class MermaidSurfaceTrip : MonoBehaviour
 
         int visuals = Mathf.Min(rocksSold, 8);
         Vector3 from = swimmer != null ? swimmer.transform.position : transform.position;
-        Vector3 to = boat != null ? boatBasePos + new Vector3(0.05f, 0.10f, 0f) : from + Vector3.right;
+        // Aim at the crow itself; the rocks re-home to its live position each frame so they
+        // land on the bird even as the boat bobs.
+        Vector3 to = crow != null ? crow.position
+                   : (boat != null ? boatBasePos + new Vector3(0.05f, 0.10f, 0f) : from + Vector3.right);
         for (int i = 0; i < visuals; i++)
         {
             var go = MakeDiscObj(surfaceSet.transform, "SoldRock",
                 new Color(0.45f, 0.43f, 0.40f), 12, 0.065f + 0.02f * (i % 3));
             go.transform.position = from;
-            flyingRocks.Add(new FlyingRock { t = go.transform, from = from, to = to, u = -i * 0.16f });
+            flyingRocks.Add(new FlyingRock { t = go.transform, from = from, to = to, target = crow, u = -i * 0.16f });
         }
     }
 
@@ -299,6 +316,7 @@ public class MermaidSurfaceTrip : MonoBehaviour
         {
             var r = flyingRocks[i];
             if (r.t == null) { flyingRocks.RemoveAt(i); continue; }
+            if (r.target != null) r.to = r.target.position;   // re-home onto the crow as it bobs
             r.u += dt / RockFlightTime;          // u < 0 = staggered launch delay
             float u = Mathf.Clamp01(r.u);
             Vector3 p = Vector3.Lerp(r.from, r.to, u) + Vector3.up * (1.1f * 4f * u * (1f - u));
@@ -386,24 +404,46 @@ public class MermaidSurfaceTrip : MonoBehaviour
         if (sky != null) sky.position = new Vector3(sky.position.x, surfaceY + 4f, 0f);
         if (waterline != null) waterline.position = new Vector3(waterline.position.x, surfaceY, 0f);
 
-        // Boat "physics": the treadmill current drags it backward exactly like the ground
-        // scroll (same motionScale remap the seaweed uses), while the crow rows it toward
-        // its spot near her at a capped speed. Fast mermaid → the gap grows; she slows or
-        // surfaces → the current dies and the boat catches up.
+        // Boat "physics": while she swims the treadmill current drags it back (screen-left),
+        // matching the ground scroll. Only the current ever moves it left.
         if (swimmer != null)
         {
             float t01 = Mathf.Clamp01((swimmer.motionScale - 0.6f) / 0.37f);
             float ease = t01 * t01 * (3f - 2f * t01);
             boatBasePos.x -= swimmer.cruiseSpeed * waterCurrentScale * ease * dt;
         }
-        // Rowing only ever CLOSES the gap toward her; it never rows backward to re-open the
-        // trailing distance. So if the boat catches all the way up to her while she's stopped
-        // (rummaging), it just sits there — it only falls behind again when she swims off
-        // (the current) or docks in front (surfacing). Clamp the trail target so it can't sit
-        // ahead of where the boat already is.
+
+        // Rowing only ever CLOSES the gap toward her — it never rows backward to re-open the
+        // trailing distance. So when it catches up to her while she's stopped (rummaging) it
+        // just sits there; it only falls behind again once she swims off, and it never sits
+        // further right than the trade/dock spot in front of her.
         float rowTarget = docked ? boatTargetX : Mathf.Max(boatTargetX, boatBasePos.x);
-        boatBasePos.x = Mathf.SmoothDamp(boatBasePos.x, rowTarget, ref boatXVel,
-            Mathf.Max(0.05f, boatCatchUpTime), Mathf.Max(0.1f, boatRowSpeed), dt);
+        float rowCatchUp = Mathf.Max(0.05f, boatCatchUpTime);
+        float rowSpeedCap = Mathf.Max(0.1f, boatRowSpeed);
+
+        // Keep it on screen: if she's swimming fast enough to leave it behind the left edge
+        // of the view, it rows hard (outrunning the current) until it's comfortably in frame
+        // again — so at any zoom the boat stays visible.
+        Camera scCam = Camera.main;
+        if (scCam != null && scCam.orthographic && swimmer != null)
+        {
+            float halfW = scCam.orthographicSize * Mathf.Max(0.1f, scCam.aspect);
+            float minVisibleX = scCam.transform.position.x - halfW + BoatEdgeMargin;
+            if (boatBasePos.x < minVisibleX)
+            {
+                rowTarget = Mathf.Max(rowTarget, minVisibleX);
+                rowCatchUp = 0.35f;
+                rowSpeedCap = Mathf.Max(rowSpeedCap, swimmer.cruiseSpeed * 1.6f);
+            }
+        }
+
+        boatBasePos.x = Mathf.SmoothDamp(boatBasePos.x, rowTarget, ref boatXVel, rowCatchUp, rowSpeedCap, dt);
+
+        if (swimmer != null)
+        {
+            float rightCap = swimmer.transform.position.x + boatDockOffsetX;
+            if (boatBasePos.x > rightCap) { boatBasePos.x = rightCap; if (boatXVel > 0f) boatXVel = 0f; }
+        }
         boat.position = boatBasePos + Vector3.up * (0.045f * Mathf.Sin(t * 1.2f));
         boat.rotation = Quaternion.Euler(0f, 0f, 2.6f * Mathf.Sin(t * 0.8f + 1f));
 
