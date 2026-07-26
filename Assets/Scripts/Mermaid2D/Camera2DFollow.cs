@@ -27,6 +27,10 @@ public class Camera2DFollow : MonoBehaviour
     public float zoomSensitivity = 0.4f;
     public Key resetKey = Key.R;
 
+    [Header("Direction")]
+    [Tooltip("Mirror the view horizontally so the whole scene reads as swimming LEFT: mermaid, scrolling grass, boat and crow all flip together while the simulation (and the screen-space UI) stays untouched. Driven live by Mermaid2DBootstrap.swimLeft.")]
+    public bool mirrorX;
+
     Camera cam;
     float xVel, yVel;
     bool pivotInitialized;
@@ -55,6 +59,19 @@ public class Camera2DFollow : MonoBehaviour
         pivot.y = Mathf.SmoothDamp(pivot.y, desired.y, ref yVel, verticalSmoothTime);
 
         transform.position = new Vector3(pivot.x, pivot.y, transform.position.z);
+        ApplyProjection();
+    }
+
+    // Re-derive the projection from the current ortho size every frame (so zoom keeps
+    // working), then mirror X when requested. ScreenToWorldPoint/ViewportToWorldPoint
+    // invert through the same matrix, so clicks keep landing on the right world spot.
+    void ApplyProjection()
+    {
+        cam.ResetProjectionMatrix();
+        if (!mirrorX) return;
+        var m = cam.projectionMatrix;
+        m.m00 = -m.m00;
+        cam.projectionMatrix = m;
     }
 
     void HandleInput()

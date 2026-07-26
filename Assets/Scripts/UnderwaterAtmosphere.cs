@@ -73,7 +73,7 @@ public class UnderwaterAtmosphere : MonoBehaviour
     {
         // Brighten the existing directional "sun" for a sunlit-shallows look.
         Light sun = null;
-        foreach (var l in FindObjectsByType<Light>(FindObjectsSortMode.None))
+        foreach (var l in FindObjectsByType<Light>())
             if (l.type == LightType.Directional) { sun = l; break; }
         if (sun == null)
         {

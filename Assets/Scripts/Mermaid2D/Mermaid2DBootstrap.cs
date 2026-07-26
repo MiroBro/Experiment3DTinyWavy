@@ -34,6 +34,8 @@ public class Mermaid2DBootstrap : MonoBehaviour
     public Vector2 spawnPosition = Vector2.zero;
 
     [Header("Swim Motion (live-editable)")]
+    [Tooltip("Swim to the LEFT instead of the right. The whole scene is mirrored through the camera — mermaid, scrolling grass, boat and crow flip together, the rig/sim and screen-space UI are untouched. (The edit-mode Scene view preview stays right-facing; only cameras with Camera2DFollow mirror.)")]
+    public bool swimLeft = true;
     public float porpoiseAmplitude = 0.29f;
     public float porpoiseFrequency = 0.83f;
     public float cruiseSpeed = 3f;
@@ -184,6 +186,8 @@ public class Mermaid2DBootstrap : MonoBehaviour
     public float outlineWidth = 0.045f;
     [Tooltip("Stroke color (alpha respected).")]
     public Color outlineColor = Color.black;
+    [Tooltip("DIAGNOSTIC for ScreenSpace mode: overlays the raw silhouette mask the outline pass sees as translucent white. If she doesn't light up white with this on, the mask pass isn't seeing her renderers; if she does but no stroke shows with it off, the dilation/composite is at fault.")]
+    public bool outlineDebugMask = false;
 
     // ---------------------------------------------------------------- custom art
     // Everything below is optional. Leave a slot empty to keep the procedural look.
@@ -402,6 +406,7 @@ public class Mermaid2DBootstrap : MonoBehaviour
     readonly List<Seaweed2D> seaweedLayers = new List<Seaweed2D>();
 
     Mermaid2DForager foragerRef;   // runtime forager, kept so the reach fields tune live
+    Camera2DFollow followRef;      // runtime camera follow, kept so swimLeft tunes live
 
     // Hair runtime state.
     readonly List<GameObject> hairGameObjects = new List<GameObject>();
@@ -505,6 +510,7 @@ public class Mermaid2DBootstrap : MonoBehaviour
         armBoneSet.Clear();
         seaweedLayers.Clear();
         foragerRef = null;
+        followRef = null;
         hairGameObjects.Clear();
         hairBones.Clear();
         hairBoneSet.Clear();
@@ -524,7 +530,7 @@ public class Mermaid2DBootstrap : MonoBehaviour
     void DestroyPreview()
     {
         // Marker-based sweep — catches the preview even if it was renamed or duplicated.
-        var markers = FindObjectsByType<Mermaid2DPreviewMarker>(FindObjectsInactive.Include, FindObjectsSortMode.None);
+        var markers = FindObjectsByType<Mermaid2DPreviewMarker>(FindObjectsInactive.Include);
         foreach (var m in markers)
         {
             if (m == null) continue;
@@ -544,10 +550,13 @@ public class Mermaid2DBootstrap : MonoBehaviour
         // older preview accidentally saved into the scene file — it would swim alongside
         // the real mermaid with stale tuning. Destroy it and dirty the scene so a save
         // persists the cleanup.
-        var staleChains = FindObjectsByType<Mermaid2DBoneChain>(FindObjectsInactive.Include, FindObjectsSortMode.None);
+        var staleChains = FindObjectsByType<Mermaid2DBoneChain>(FindObjectsInactive.Include);
         foreach (var c in staleChains)
         {
             if (c == null || (chain != null && c == chain)) continue;
+            // In play mode the marker sweep above destroys the preview DEFERRED (end of
+            // frame), so its chain still shows up in this find — already handled, not stale.
+            if (c.GetComponentInParent<Mermaid2DPreviewMarker>(true) != null) continue;
             var go = c.gameObject;
             Debug.LogWarning($"Mermaid2DBootstrap: removed stale saved mermaid '{go.name}' — save the scene to make the cleanup permanent.", this);
             if (Application.isPlaying) { go.SetActive(false); Destroy(go); }
@@ -866,7 +875,7 @@ public class Mermaid2DBootstrap : MonoBehaviour
             if (src.gameObject.name == OutlineCloneName) continue;
             if (src.transform.Find(OutlineCloneName) != null) continue;
             var go = new GameObject(OutlineCloneName);
-            go.hideFlags = HideFlags.DontSave;
+            if (!Application.isPlaying) go.hideFlags = HideFlags.DontSave;
             go.transform.SetParent(src.transform, false);
             var clone = go.AddComponent<Ribbon2D>();
             var mr = go.GetComponent<MeshRenderer>();
@@ -887,7 +896,7 @@ public class Mermaid2DBootstrap : MonoBehaviour
             if (n != "HeadSprite" && !n.StartsWith("HandSprite")) continue;
             if (src.transform.Find(OutlineCloneName) != null) continue;
             var go = new GameObject(OutlineCloneName);
-            go.hideFlags = HideFlags.DontSave;
+            if (!Application.isPlaying) go.hideFlags = HideFlags.DontSave;
             go.transform.SetParent(src.transform, false);
             var sr = go.AddComponent<SpriteRenderer>();
             sr.sprite = src.sprite;
@@ -907,7 +916,7 @@ public class Mermaid2DBootstrap : MonoBehaviour
             var mf = srcMr.GetComponent<MeshFilter>();
             if (mf == null || mf.sharedMesh == null) continue;
             var go = new GameObject(OutlineCloneName);
-            go.hideFlags = HideFlags.DontSave;
+            if (!Application.isPlaying) go.hideFlags = HideFlags.DontSave;
             go.transform.SetParent(srcMr.transform, false);
             go.AddComponent<MeshFilter>().sharedMesh = mf.sharedMesh;
             var mr = go.AddComponent<MeshRenderer>();
@@ -990,6 +999,7 @@ public class Mermaid2DBootstrap : MonoBehaviour
         MermaidOutlineFeature.Enabled = outlineMode == OutlineMode.ScreenSpace && outlineWidth > 0.0001f;
         MermaidOutlineFeature.WorldWidth = outlineWidth;
         MermaidOutlineFeature.StrokeColor = outlineColor;
+        MermaidOutlineFeature.DebugViewMask = outlineDebugMask;
     }
 
     void BuildTail(Transform hipBone)
@@ -1419,6 +1429,8 @@ public class Mermaid2DBootstrap : MonoBehaviour
         var follow = cam.GetComponent<Camera2DFollow>();
         if (follow == null) follow = cam.gameObject.AddComponent<Camera2DFollow>();
         follow.target = driver;
+        follow.mirrorX = swimLeft;
+        followRef = follow;
     }
 
     void EnsureForagingAndSeaweed()
@@ -1628,6 +1640,9 @@ public class Mermaid2DBootstrap : MonoBehaviour
             else if (armBoneSet.Contains(e.bone)) mult *= am;
             e.bone.smoothTime = e.baseSmoothTime * mult;
         }
+
+        // 1b. Live swim direction (camera mirror).
+        if (followRef != null) followRef.mirrorX = swimLeft;
 
         // 2. Live swimmer params.
         if (swimmer != null)

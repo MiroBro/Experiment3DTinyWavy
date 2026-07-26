@@ -1,11 +1,59 @@
-// Fullscreen pass for the mermaid outline: reads the coverage mask, dilates it by the
-// stroke radius (ring taps), and draws the stroke color only OUTSIDE the silhouette —
-// interior pixels are discarded so her internal art is untouched.
+// Fullscreen passes for the mermaid outline. Separable dilation: pass 0 stretches the
+// coverage mask by the stroke radius along ONE axis (run once horizontally into a temp
+// target); pass 1 stretches that along the other axis (completing an exact square
+// dilation) and draws the stroke color only OUTSIDE the original silhouette — interior
+// pixels are discarded so her internal art is untouched, and gaps narrower than the
+// stroke seal shut just like the black-clone mode.
 Shader "Hidden/Mermaid2D/OutlineComposite"
 {
+    HLSLINCLUDE
+    // URP Core.hlsl must come first: it defines TEXTURE2D_X, which Blit.hlsl uses.
+    #include "Packages/com.unity.render-pipelines.universal/ShaderLibrary/Core.hlsl"
+    #include "Packages/com.unity.render-pipelines.core/Runtime/Utilities/Blit.hlsl"
+
+    SAMPLER(mermaid_linear_clamp_sampler);
+
+    // xy = mask texel size, z = stroke radius in pixels.
+    float4 _MaskTexelRadius;
+
+    // Max of _BlitTexture along dir (one texel per step), out to the stroke radius.
+    float DirectionalMax(float2 uv, float2 dir)
+    {
+        int n = (int)ceil(_MaskTexelRadius.z);
+        float m = 0.0;
+        UNITY_LOOP
+        for (int t = -n; t <= n; t++)
+        {
+            m = max(m, SAMPLE_TEXTURE2D_X(_BlitTexture, mermaid_linear_clamp_sampler,
+                uv + dir * t).r);
+        }
+        return m;
+    }
+    ENDHLSL
+
     SubShader
     {
         Tags { "RenderType" = "Opaque" "RenderPipeline" = "UniversalPipeline" }
+
+        Pass
+        {
+            Name "MermaidOutlineDilateH"
+            Cull Off
+            ZWrite Off
+            ZTest Always
+
+            HLSLPROGRAM
+            #pragma vertex Vert
+            #pragma fragment FragDilate
+
+            half4 FragDilate(Varyings input) : SV_Target
+            {
+                float m = DirectionalMax(input.texcoord, float2(_MaskTexelRadius.x, 0.0));
+                return half4(m, m, m, 1.0);
+            }
+            ENDHLSL
+        }
+
         Pass
         {
             Name "MermaidOutlineComposite"
@@ -16,42 +64,26 @@ Shader "Hidden/Mermaid2D/OutlineComposite"
 
             HLSLPROGRAM
             #pragma vertex Vert
-            #pragma fragment Frag
-            #include "Packages/com.unity.render-pipelines.core/Runtime/Utilities/Blit.hlsl"
+            #pragma fragment FragComposite
 
-            SAMPLER(mermaid_linear_clamp_sampler);
+            // The ORIGINAL (undilated) mask — the inside/outside test.
+            TEXTURE2D_X(_MermaidMask);
 
             float4 _OutlineColor;
-            // xy = mask texel size, z = stroke radius in pixels.
-            float4 _MaskTexelRadius;
+            // 1 = show the raw coverage mask as a white overlay (diagnostics).
+            float _DebugView;
 
-            half4 Frag(Varyings input) : SV_Target
+            half4 FragComposite(Varyings input) : SV_Target
             {
                 float2 uv = input.texcoord;
-                float inside = SAMPLE_TEXTURE2D_X(_BlitTexture, mermaid_linear_clamp_sampler, uv).r;
+                float inside = SAMPLE_TEXTURE2D_X(_MermaidMask, mermaid_linear_clamp_sampler, uv).r;
+                if (_DebugView > 0.5)
+                    return half4(1.0, 1.0, 1.0, inside * 0.8);
                 // Interior (and most of the anti-aliased rim): leave the body untouched.
                 clip(0.35 - inside);
 
-                float radiusPx = _MaskTexelRadius.z;
-                float2 texel = _MaskTexelRadius.xy;
-                float coverage = 0.0;
-
-                // 3 rings x 16 directions, half-step stagger on odd rings for rounder strokes.
-                UNITY_UNROLL
-                for (int ring = 1; ring <= 3; ring++)
-                {
-                    float rad = radiusPx * ring / 3.0;
-                    float stagger = (ring & 1) ? 0.5 : 0.0;
-                    UNITY_UNROLL
-                    for (int k = 0; k < 16; k++)
-                    {
-                        float ang = (k + stagger) * (6.2831853 / 16.0);
-                        float2 offs = float2(cos(ang), sin(ang)) * rad * texel;
-                        coverage = max(coverage,
-                            SAMPLE_TEXTURE2D_X(_BlitTexture, mermaid_linear_clamp_sampler, uv + offs).r);
-                    }
-                }
-
+                // _BlitTexture is the horizontally-dilated mask; finish with the vertical max.
+                float coverage = DirectionalMax(uv, float2(0.0, _MaskTexelRadius.y));
                 clip(coverage - 0.003);
                 return half4(_OutlineColor.rgb, _OutlineColor.a * coverage);
             }

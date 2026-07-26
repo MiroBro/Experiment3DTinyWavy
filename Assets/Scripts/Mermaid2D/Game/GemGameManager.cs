@@ -516,7 +516,7 @@ public class GemGameManager : MonoBehaviour
             atmosphere.godRayColor = loc.godRay;
             atmosphere.Rebuild();
         }
-        foreach (var field in FindObjectsByType<Seaweed2D>(FindObjectsSortMode.None))
+        foreach (var field in FindObjectsByType<Seaweed2D>())
         {
             field.colorA = loc.seaweedA;
             field.colorB = loc.seaweedB;
