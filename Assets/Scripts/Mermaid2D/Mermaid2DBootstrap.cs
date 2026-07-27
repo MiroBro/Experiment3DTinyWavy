@@ -191,6 +191,8 @@ public class Mermaid2DBootstrap : MonoBehaviour
     public Color fluke3DToonInkColor = new Color(0.35f, 0.20f, 0.10f);
     [Tooltip("Darkens the FAR lobe's toon colors so the two lobes read as clearly separate (a classic 2D depth cue). 0 = identical lobes. Ignored when a custom fluke3DMaterial is assigned.")]
     [Range(0f, 0.7f)] public float fluke3DFarLobeDarken = 0.25f;
+    [Tooltip("EXTRA outline drawn only around the lobe CLOSEST to the camera, layered between the two lobes — it cuts the near lobe out from the one behind for a strong depth separation. World units; keep thinner than outlineWidth. Uses outlineColor. 0 = off. Live.")]
+    [Range(0f, 0.2f)] public float fluke3DNearOutlineWidth = 0.03f;
 
     [Header("Hair (live-editable; some fields rebuild the hair on change)")]
     [Range(1, 80)] public int hairStrandCount = 26;
@@ -482,6 +484,9 @@ public class Mermaid2DBootstrap : MonoBehaviour
     readonly MeshRenderer[] fluke3DHulls = new MeshRenderer[2];   // inverted-hull outline twins
     readonly MeshFilter[] fluke3DHullMfs = new MeshFilter[2];
     Material fluke3DHullMat;
+    MeshRenderer fluke3DSepHull;   // thinner hull around the NEAR lobe, layered between the lobes
+    MeshFilter fluke3DSepHullMf;
+    Material fluke3DSepMat;
     readonly HashSet<Mermaid2DBone> armBoneSet = new HashSet<Mermaid2DBone>();
 
     // Seaweed runtime state (both depth layers) — kept so the motion fields tune live.
@@ -603,6 +608,9 @@ public class Mermaid2DBootstrap : MonoBehaviour
         fluke3DHulls[0] = fluke3DHulls[1] = null;
         fluke3DHullMfs[0] = fluke3DHullMfs[1] = null;
         fluke3DHullMat = null;
+        fluke3DSepHull = null;
+        fluke3DSepHullMf = null;
+        fluke3DSepMat = null;
         armBoneSet.Clear();
         seaweedLayers.Clear();
         foragerRef = null;
@@ -1257,9 +1265,10 @@ public class Mermaid2DBootstrap : MonoBehaviour
             mr.sharedMaterial = Fluke3DMaterial(s);   // per-lobe instance (far lobe darkens)
             mr.shadowCastingMode = UnityEngine.Rendering.ShadowCastingMode.Off;
             mr.receiveShadows = false;
-            // Transparent-queue shader + sortingOrder slots the tubes into the sprite sort;
-            // between themselves the two lobes sort by camera distance (near lobe on top).
-            mr.sortingOrder = OrderFluke;
+            // Transparent-queue shader + sortingOrder slots the tubes into the sprite sort.
+            // Explicit per-lobe orders leave a slot between them for the separation stroke:
+            // far lobe −2, separation hull −1, near lobe 0 (all under the tail at 1).
+            mr.sortingOrder = s == 0 ? OrderFluke - 2 : OrderFluke;
             var tube = tgo.AddComponent<TubeRenderer>();
             tube.points = tubePoints;
             tube.radii = new float[tubePoints.Length];
@@ -1297,6 +1306,26 @@ public class Mermaid2DBootstrap : MonoBehaviour
             hmr.receiveShadows = false;
             fluke3DHulls[s] = hmr;
             fluke3DHullMfs[s] = hmf;
+
+            // NEAR lobe only: a second, thinner hull layered BETWEEN the lobes — it draws
+            // over the far lobe but under the near one, cutting the near fluke out from
+            // the fluke behind it (line-weight depth separation).
+            if (s == 1)
+            {
+                var ssh = Shader.Find("Mermaid/FlukeOutlineHull2D");
+                fluke3DSepMat = ssh != null
+                    ? new Material(ssh) { renderQueue = 3000 }
+                    : SpriteMat(outlineColor);
+                var sgo = new GameObject("SeparationHull");
+                sgo.transform.SetParent(tgo.transform, false);
+                fluke3DSepHullMf = sgo.AddComponent<MeshFilter>();
+                fluke3DSepHullMf.sharedMesh = tgo.GetComponent<MeshFilter>().sharedMesh;
+                fluke3DSepHull = sgo.AddComponent<MeshRenderer>();
+                fluke3DSepHull.sharedMaterial = fluke3DSepMat;
+                fluke3DSepHull.sortingOrder = OrderFluke - 1;
+                fluke3DSepHull.shadowCastingMode = UnityEngine.Rendering.ShadowCastingMode.Off;
+                fluke3DSepHull.receiveShadows = false;
+            }
         }
         RefreshFluke3DTubes();
 
@@ -1688,6 +1717,9 @@ public class Mermaid2DBootstrap : MonoBehaviour
         fluke3DHulls[0] = fluke3DHulls[1] = null;
         fluke3DHullMfs[0] = fluke3DHullMfs[1] = null;
         fluke3DHullMat = null;
+        fluke3DSepHull = null;
+        fluke3DSepHullMf = null;
+        fluke3DSepMat = null;
         tailBonesOrdered.Clear();
 
         for (int i = 0; i < tailGameObjects.Count; i++)
@@ -2044,6 +2076,19 @@ public class Mermaid2DBootstrap : MonoBehaviour
             {
                 fluke3DHullMat.SetColor("_Color", outlineColor);
                 fluke3DHullMat.SetFloat("_Width", outlineWidth);
+            }
+
+            // Near-lobe separation stroke (independent of the unified outline toggle).
+            if (fluke3DSepHull != null)
+            {
+                fluke3DSepHull.enabled = fluke3DNearOutlineWidth > 0.0001f;
+                if (fluke3DTubes[1] != null && fluke3DSepHullMf != null)
+                    fluke3DSepHullMf.sharedMesh = fluke3DTubes[1].GetComponent<MeshFilter>().sharedMesh;
+            }
+            if (fluke3DSepMat != null && fluke3DSepMat.HasProperty("_Width"))
+            {
+                fluke3DSepMat.SetColor("_Color", outlineColor);
+                fluke3DSepMat.SetFloat("_Width", fluke3DNearOutlineWidth);
             }
         }
         if (fluke3DLightRef != null) fluke3DLightRef.enabled = fluke3DLight;
