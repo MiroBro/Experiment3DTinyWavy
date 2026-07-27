@@ -141,6 +141,34 @@ public class Mermaid2DBootstrap : MonoBehaviour
     [Range(-1f, 1f)] public float flukeRibbonDepthSkew = 0.45f;
     [Tooltip("Motion-driven roll: extra twist from each lobe's ACTUAL bending as the tail whips, so rolls chase her movement instead of a metronome. This is most of what made the 3D flukes feel alive. 0 = clock wave only.")]
     [Range(0f, 3f)] public float flukeRibbonBendRoll = 0.6f;
+    [Tooltip("Unified-outline width floor on the twisting lobes: the ink stroke never gets thinner than this fraction of the untwisted fluke width, even when the art inside rolls fully edge-on. 0 = stroke pinches with the art.")]
+    [Range(0f, 1f)] public float flukeRibbonOutlineMinFrac = 0.65f;
+
+    [Header("Fluke TRUE 3D — the actual SampleScene flukes on the 2D rig")]
+    [Tooltip("Replace the flat fluke ribbons with the REAL 3D fluke system from the 3D mermaid: MermaidBone chains lagging in full 3D + flat TubeRenderer lobes with the golden-scales shader. Real geometry, real foreshortening, no projection tricks — and the unified outline skips it entirely. Uses the SAME tuned numbers as SampleScene (bones/span/sweep/width curve/smoothing are shared fields above). Rebuilds on toggle/yaw/roll change.")]
+    public bool flukeTrue3D = true;
+    [Tooltip("Swings the fin's depth extent toward the camera plane. 0 = the horizontal fin points straight into the screen (edge-on sliver), 90 = fully sideways (reads flat). ~35 = the 3D scene's 3/4 view.")]
+    [Range(0f, 90f)] public float fluke3DYawDeg = 35f;
+    [Tooltip("Splays the two lobes apart vertically on screen (rolls the fin plane around her spine axis). Negative flips which lobe rises.")]
+    [Range(-60f, 60f)] public float fluke3DRollDeg = 25f;
+    [Tooltip("How far BACK the fin sweeps from the tail tip — the lobes' length (SampleScene: 1.74). Rebuilds on change.")]
+    [Range(0.3f, 5f)] public float fluke3DLength = 1.74f;
+    [Tooltip("How wide the fan SPREADS across — each lobe's sideways reach; with the roll this is also how tall the fin fans on screen (SampleScene: 1.38). Rebuilds on change.")]
+    [Range(0.2f, 4f)] public float fluke3DSpread = 1.38f;
+    [Tooltip("Multiplier on the shared fluke width curve — how broad each lobe's leaf is. Live.")]
+    [Range(0.2f, 3f)] public float fluke3DWidthScale = 1f;
+    [Tooltip("Bone lag at the lobe ROOT, seconds (still multiplied by globalSmoothMultiplier × flukeFlowMultiplier like every other part). Live.")]
+    [Range(0.01f, 1f)] public float fluke3DBaseLag = 0.1f;
+    [Tooltip("Bone lag at the lobe TIP, seconds — the 'how many sinus waves ripple across the fin' control. The bigger the root→tip lag difference, the more of the tail-beat wave is strung out along each lobe: 0.3 = SampleScene's single gentle roll, 0.8–1.5 = loose fabric with several traveling waves (amplitude fades toward the tip the higher you go). Live.")]
+    [Range(0.02f, 2f)] public float fluke3DTipLag = 0.3f;
+    [Tooltip("Cross-section flatness of each lobe (SampleScene: 0.21). Smaller = thinner fin. Live.")]
+    [Range(0.05f, 1f)] public float fluke3DAspect = 0.21f;
+    [Tooltip("Sides around each lobe's cross-section (SampleScene: 9). Live.")]
+    [Range(3, 16)] public int fluke3DTubeSides = 9;
+    [Tooltip("Directional key light spawned with the fin so the golden-scales shader has light to catch — the 2D sprites are unlit and ignore it. Live.")]
+    public bool fluke3DLight = true;
+    [Tooltip("Optional material override for the 3D lobes. Empty = Mermaid/GoldScales2D (the SampleScene look, sorted into the 2D sprite order).")]
+    public Material fluke3DMaterial;
 
     [Header("Hair (live-editable; some fields rebuild the hair on change)")]
     [Range(1, 80)] public int hairStrandCount = 26;
@@ -423,6 +451,11 @@ public class Mermaid2DBootstrap : MonoBehaviour
     readonly HashSet<Mermaid2DBone> tailBoneSet = new HashSet<Mermaid2DBone>();
     readonly HashSet<Mermaid2DBone> flukeBoneSet = new HashSet<Mermaid2DBone>();
     readonly Ribbon2D[] flukeRibbons = new Ribbon2D[2];   // [0]=Up lobe, [1]=Down lobe — twist tunes live
+    // True-3D fluke runtime state (flukeTrue3D mode): real MermaidBone chains + tube lobes.
+    readonly List<MermaidBone> fluke3DBones = new List<MermaidBone>();
+    readonly List<float> fluke3DBoneT = new List<float>();   // 0 at lobe root → 1 at tip; lag re-derived live
+    readonly TubeRenderer[] fluke3DTubes = new TubeRenderer[2];
+    Light fluke3DLightRef;
     readonly HashSet<Mermaid2DBone> armBoneSet = new HashSet<Mermaid2DBone>();
 
     // Seaweed runtime state (both depth layers) — kept so the motion fields tune live.
@@ -460,6 +493,11 @@ public class Mermaid2DBootstrap : MonoBehaviour
     int _lastFlukeBonesPerLobe = -1;
     float _lastFlukeSpan = float.NaN;
     float _lastFlukeSweep = float.NaN;
+    bool _lastFlukeTrue3D;
+    float _lastFluke3DYaw = float.NaN;
+    float _lastFluke3DRoll = float.NaN;
+    float _lastFluke3DLength = float.NaN;
+    float _lastFluke3DSpread = float.NaN;
     int _lastHairStrandCount = -1;
     int _lastHairBonesPerStrand = -1;
     float _lastHairStrandLength = float.NaN;
@@ -531,6 +569,10 @@ public class Mermaid2DBootstrap : MonoBehaviour
         tailBoneSet.Clear();
         flukeBoneSet.Clear();
         flukeRibbons[0] = flukeRibbons[1] = null;
+        fluke3DBones.Clear();
+        fluke3DBoneT.Clear();
+        fluke3DTubes[0] = fluke3DTubes[1] = null;
+        fluke3DLightRef = null;
         armBoneSet.Clear();
         seaweedLayers.Clear();
         foragerRef = null;
@@ -633,6 +675,7 @@ public class Mermaid2DBootstrap : MonoBehaviour
         ApplyLiveTick();
         swimmer.Step(dt);
         chain.TickAll(dt);
+        TickFluke3DBones(dt);   // true-3D flukes lag the freshly ticked 2D tail tip
 
         UnityEditor.EditorApplication.QueuePlayerLoopUpdate();
         UnityEditor.SceneView.RepaintAll();
@@ -999,6 +1042,7 @@ public class Mermaid2DBootstrap : MonoBehaviour
             p.clone.twistEnvelope = p.source.twistEnvelope;
             p.clone.twistViewSkew = p.source.twistViewSkew;
             p.clone.twistCurvatureGain = p.source.twistCurvatureGain;
+            p.clone.twistMinWidthFrac = p.source.twistMinWidthFrac;
             p.clone.twistAnimScale = p.source.twistAnimScale;
             p.clone.twistShade = 0f;
             p.clone.twistBackTint = Color.white;
@@ -1078,6 +1122,8 @@ public class Mermaid2DBootstrap : MonoBehaviour
 
     void BuildFlukes(Transform tailTip)
     {
+        if (flukeTrue3D) { BuildFlukes3D(tailTip); return; }
+
         float spanDelta = flukeSpan / Mathf.Max(1, flukeBonesPerLobe);
         float sweepDelta = flukeSweep / Mathf.Max(1, flukeBonesPerLobe);
 
@@ -1119,6 +1165,145 @@ public class Mermaid2DBootstrap : MonoBehaviour
             flukeRibbons[s] = ribbon;   // twist fields are pushed every ApplyLiveTick
             tailGameObjects.Add(ribbon.gameObject);
         }
+    }
+
+    // The ACTUAL 3D fluke system from the SampleScene mermaid, mounted on the 2D rig: two
+    // MermaidBone chains lag the (2D) tail tip in full 3D, and flat TubeRenderer lobes render
+    // real geometry through the orthographic camera — true foreshortening and ripple. The
+    // assembly is yawed/rolled into a 3/4 presentation (unrotated, the fin is horizontal and
+    // a side camera would see it edge-on). Bones are ticked by this component's LateUpdate
+    // (play) / EditorPreviewTick (preview), between the 2D chain (−50) and TubeRenderer (50).
+    // The unified outline never touches these: it only targets Ribbon2D + named sprites.
+    void BuildFlukes3D(Transform tailTip)
+    {
+        int n = Mathf.Max(1, flukeBonesPerLobe);
+        float spanDelta = fluke3DSpread / n;
+        float sweepDelta = fluke3DLength / n;
+        Quaternion look = Quaternion.AngleAxis(fluke3DYawDeg, Vector3.up)
+                        * Quaternion.AngleAxis(fluke3DRollDeg, Vector3.right);
+        Vector3 finNormal = look * Vector3.up;
+
+        for (int s = 0; s < 2; s++)
+        {
+            int side = (s == 0) ? 1 : -1;                 // +Z lobe (far), then −Z lobe (near)
+            string suffix = side > 0 ? "Far" : "Near";
+            Vector3 delta = look * new Vector3(-sweepDelta, 0f, side * spanDelta);
+
+            var tubePoints = new Transform[n + 1];
+            tubePoints[0] = tailTip;
+            Transform prev = tailTip;
+            Vector3 prevWorldPos = tailTip.position;
+
+            for (int i = 0; i < n; i++)
+            {
+                float tBone = (i + 1) / (float)n;
+                Vector3 boneRestPos = prevWorldPos + delta;
+
+                var go = new GameObject($"Fluke3D{suffix}{i:D2}");
+                go.transform.SetParent(root, false);
+                go.transform.position = boneRestPos;
+                var bone = go.AddComponent<MermaidBone>();
+                bone.anchor = prev;
+                // Lag profile is re-derived from fluke3DBaseLag/TipLag every ApplyLiveTick
+                // (waviness tunes live) — this is just the initial value.
+                bone.smoothTime = Mathf.Lerp(fluke3DBaseLag, fluke3DTipLag, tBone);
+                bone.maxBendAngleDeg = flukeMaxBendDeg;
+                // Rest offset in the anchor's REST frame (identity rotation at build) — the
+                // fin then swings with the tail tip's live rotation, lagging bone to bone.
+                bone.InitializeWithExplicitOffset(delta, Quaternion.identity);
+                fluke3DBones.Add(bone);
+                fluke3DBoneT.Add(tBone);
+                tailGameObjects.Add(go);
+
+                tubePoints[i + 1] = go.transform;
+                prev = go.transform;
+                prevWorldPos = boneRestPos;
+            }
+
+            var tgo = new GameObject($"FlukeTube3D{suffix}");
+            tgo.transform.SetParent(root, false);
+            tgo.AddComponent<MeshFilter>();
+            var mr = tgo.AddComponent<MeshRenderer>();
+            mr.sharedMaterial = Fluke3DMaterial();
+            mr.shadowCastingMode = UnityEngine.Rendering.ShadowCastingMode.Off;
+            mr.receiveShadows = false;
+            // Transparent-queue shader + sortingOrder slots the tubes into the sprite sort;
+            // between themselves the two lobes sort by camera distance (near lobe on top).
+            mr.sortingOrder = OrderFluke;
+            var tube = tgo.AddComponent<TubeRenderer>();
+            tube.points = tubePoints;
+            tube.radii = new float[tubePoints.Length];
+            tube.sides = fluke3DTubeSides;
+            tube.aspectRatio = fluke3DAspect;
+            // Keep each ring's WIDE axis in the rolled/yawed fin plane, perpendicular to the
+            // lobe. (WorldUpAligned — the 3D scene's choice — assumes a horizontal fin and
+            // would fight the roll.)
+            tube.frameMode = TubeRenderer.FrameMode.FixedReference;
+            Vector3 lobeDir = look * new Vector3(-fluke3DLength, 0f, side * fluke3DSpread);
+            tube.referenceAxis = Vector3.Cross(finNormal, lobeDir).normalized;
+            tube.capEnds = true;
+            fluke3DTubes[s] = tube;
+            tailGameObjects.Add(tgo);
+        }
+        RefreshFluke3DTubes();
+
+        // Key light for the golden-scales shader. Sprites are unlit, so only the fin sees it.
+        var lgo = new GameObject("Fluke3DKeyLight");
+        lgo.transform.SetParent(root, false);
+        lgo.transform.rotation = Quaternion.Euler(40f, -35f, 0f);
+        var li = lgo.AddComponent<Light>();
+        li.type = LightType.Directional;
+        li.intensity = 1.05f;
+        li.shadows = LightShadows.None;
+        li.enabled = fluke3DLight;
+        fluke3DLightRef = li;
+        tailGameObjects.Add(lgo);
+    }
+
+    // Live-refresh of the 3D lobes' cross-section shape from the shared fluke width curve.
+    void RefreshFluke3DTubes()
+    {
+        for (int s = 0; s < 2; s++)
+        {
+            var tube = fluke3DTubes[s];
+            if (tube == null || tube.radii == null) continue;
+            tube.sides = fluke3DTubeSides;
+            tube.aspectRatio = fluke3DAspect;
+            var radii = tube.radii;
+            for (int i = 0; i < radii.Length; i++)
+            {
+                float t = radii.Length > 1 ? i / (float)(radii.Length - 1) : 0f;
+                radii[i] = Mathf.Max(0.001f, flukeWidthCurve.Evaluate(t) * fluke3DWidthScale);
+            }
+        }
+    }
+
+    Material Fluke3DMaterial()
+    {
+        if (fluke3DMaterial != null) return fluke3DMaterial;
+        var sh = Shader.Find("Mermaid/GoldScales2D");
+        if (sh == null) sh = Shader.Find("Mermaid/GoldScales");   // opaque fallback
+        if (sh != null)
+        {
+            var m = new Material(sh);
+            m.renderQueue = 3000;   // transparent queue so sortingOrder applies
+            return m;
+        }
+        return SpriteMat(goldDeepColor);
+    }
+
+    // Ticks the true-3D fluke bones. This component runs at order −100, so in play the fin
+    // reads the tail tip's PREVIOUS-frame pose — invisible under 0.1–0.3s of bone smoothing.
+    void LateUpdate()
+    {
+        if (!Application.isPlaying) return;
+        TickFluke3DBones(Time.deltaTime);
+    }
+
+    void TickFluke3DBones(float dt)
+    {
+        for (int i = 0; i < fluke3DBones.Count; i++)
+            if (fluke3DBones[i] != null) fluke3DBones[i].Tick(dt);
     }
 
     void BuildHead(Transform headBone)
@@ -1441,6 +1626,10 @@ public class Mermaid2DBootstrap : MonoBehaviour
         tailBoneSet.Clear();
         flukeBoneSet.Clear();
         flukeRibbons[0] = flukeRibbons[1] = null;
+        fluke3DBones.Clear();
+        fluke3DBoneT.Clear();
+        fluke3DTubes[0] = fluke3DTubes[1] = null;
+        fluke3DLightRef = null;
         tailBonesOrdered.Clear();
 
         for (int i = 0; i < tailGameObjects.Count; i++)
@@ -1603,6 +1792,11 @@ public class Mermaid2DBootstrap : MonoBehaviour
         _lastFlukeBonesPerLobe = flukeBonesPerLobe;
         _lastFlukeSpan = flukeSpan;
         _lastFlukeSweep = flukeSweep;
+        _lastFlukeTrue3D = flukeTrue3D;
+        _lastFluke3DYaw = fluke3DYawDeg;
+        _lastFluke3DRoll = fluke3DRollDeg;
+        _lastFluke3DLength = fluke3DLength;
+        _lastFluke3DSpread = fluke3DSpread;
         _lastHairStrandCount = hairStrandCount;
         _lastHairBonesPerStrand = hairBonesPerStrand;
         _lastHairStrandLength = hairStrandLength;
@@ -1619,7 +1813,12 @@ public class Mermaid2DBootstrap : MonoBehaviour
             || !Mathf.Approximately(tailLength, _lastTailLength)
             || flukeBonesPerLobe != _lastFlukeBonesPerLobe
             || !Mathf.Approximately(flukeSpan, _lastFlukeSpan)
-            || !Mathf.Approximately(flukeSweep, _lastFlukeSweep);
+            || !Mathf.Approximately(flukeSweep, _lastFlukeSweep)
+            || flukeTrue3D != _lastFlukeTrue3D
+            || !Mathf.Approximately(fluke3DYawDeg, _lastFluke3DYaw)
+            || !Mathf.Approximately(fluke3DRollDeg, _lastFluke3DRoll)
+            || !Mathf.Approximately(fluke3DLength, _lastFluke3DLength)
+            || !Mathf.Approximately(fluke3DSpread, _lastFluke3DSpread);
     }
 
     bool HairShapeChanged()
@@ -1726,8 +1925,26 @@ public class Mermaid2DBootstrap : MonoBehaviour
             fr.twistBackTint = flukeRibbonBackTint;
             fr.twistViewSkew = flukeRibbonDepthSkew;
             fr.twistCurvatureGain = flukeRibbonBendRoll;
+            fr.twistMinWidthFrac = flukeRibbonOutlineMinFrac;
             fr.twistAnimScale = twistLiveliness;
         }
+
+        // 3d. True-3D flukes: live smoothing / bend limits / tube shape + key light toggle.
+        if (fluke3DBones.Count > 0)
+        {
+            float f3m = Mathf.Max(0f, globalSmoothMultiplier) * Mathf.Max(0.01f, flukeFlowMultiplier);
+            for (int i = 0; i < fluke3DBones.Count; i++)
+            {
+                var b = fluke3DBones[i];
+                if (b == null) continue;
+                // Waviness lives here: the root→tip lag spread stretches the tail-beat wave
+                // out along each lobe, so raising fluke3DTipLag adds traveling waves live.
+                b.smoothTime = Mathf.Lerp(fluke3DBaseLag, fluke3DTipLag, fluke3DBoneT[i]) * f3m;
+                b.maxBendAngleDeg = flukeMaxBendDeg;
+            }
+            RefreshFluke3DTubes();
+        }
+        if (fluke3DLightRef != null) fluke3DLightRef.enabled = fluke3DLight;
 
         // 4. Live-editable hair root position + hair widths.
         if (headScalp != null) headScalp.localPosition = (Vector3)hairRootOffset;

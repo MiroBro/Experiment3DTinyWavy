@@ -1,5 +1,6 @@
 using UnityEngine;
 
+[ExecuteAlways]
 [RequireComponent(typeof(MeshFilter), typeof(MeshRenderer))]
 [DefaultExecutionOrder(50)]
 public class TubeRenderer : MonoBehaviour
@@ -33,14 +34,24 @@ public class TubeRenderer : MonoBehaviour
 
     void Awake()
     {
+        EnsureMesh();
+    }
+
+    // Also recovers after editor domain reloads (the non-serialized mesh field goes null) —
+    // needed by the 2D scene's edit-mode preview, which builds tubes outside play mode.
+    void EnsureMesh()
+    {
+        if (mesh != null) return;
         mesh = new Mesh();
         mesh.name = "TubeMesh";
         mesh.MarkDynamic();
         GetComponent<MeshFilter>().sharedMesh = mesh;
+        vertsBuf = null;   // force a full buffer rebuild into the fresh mesh
     }
 
     void LateUpdate()
     {
+        EnsureMesh();
         if (points == null || points.Length < 2 || mesh == null) return;
         Build();
     }

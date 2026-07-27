@@ -64,6 +64,9 @@ public class Ribbon2D : MonoBehaviour
     public float twistViewSkew = 0.45f;
     [Tooltip("Motion-driven roll: extra twist from the centerline's local bend, in twist-degrees per (degree of bend per world unit). The lagged bones bend when the tail whips, so rolls chase the actual motion instead of the clock. ~0.6; 0 = clock wave only.")]
     public float twistCurvatureGain = 0.6f;
+    [Tooltip("OUTLINE-ONLY width floor (used when extraWidth > 0, i.e. on outline clones): the stroke's apparent cross-section never drops below this fraction of the untwisted width, and eases back to the flat orientation while held there — the ink stays a plump leaf while the art inside rolls edge-on. 0 = stroke pinches with the art.")]
+    [Range(0f, 1f)]
+    public float twistMinWidthFrac = 0.65f;
     [Tooltip("External per-frame multiplier on the WAVE amplitude only (not the base tilt) — the bootstrap feeds the swim liveliness in here so the ribbon calms when she stops.")]
     [System.NonSerialized] public float twistAnimScale = 1f;
 
@@ -194,13 +197,41 @@ public class Ribbon2D : MonoBehaviour
                 cw = Mathf.Cos(tw); sw = Mathf.Sin(tw);
             }
             // Sign of cw carries through so the texture mirror-flips when the back shows.
-            float side = cw >= 0f ? 1f : -1f;
-            Vector3 off = normal * (baseHalf * cw + side * extra) + new Vector3(0f, 0f, baseHalf * sw);
+            Vector3 off = normal * (baseHalf * cw) + new Vector3(0f, 0f, baseHalf * sw);
             // Oblique 3/4-view: shear the out-of-plane part into visible Y. The two verts
             // get +off/−off, so the cross-section visibly LEANS on screen and a traveling
             // roll makes the edges undulate — the waving-flag/ribbon read the strict
             // side-on projection can't produce on its own.
             if (twist3D) off.y += off.z * twistViewSkew;
+            // Outline stroke: extend the cross-section by `extra` along its own ON-SCREEN
+            // direction. This must stay sign-continuous — a naive ±normal*extra flips sides
+            // wherever the roll crosses edge-on, twisting the stroke quad into a bowtie
+            // that pinches to nothing and flickers as the wave travels.
+            if (extra > 0f)
+            {
+                if (twist3D)
+                {
+                    float lenScr = Mathf.Sqrt(off.x * off.x + off.y * off.y);
+                    float floorHalf = baseHalf * Mathf.Clamp01(twistMinWidthFrac);
+                    if (lenScr >= floorHalf)
+                    {
+                        if (lenScr > 1e-4f) off *= (lenScr + extra) / lenScr;
+                        else off += normal * extra;   // degenerate sliver, no floor set
+                    }
+                    else
+                    {
+                        // Hold the stroke at the floor width, easing its direction back to
+                        // the flat orientation, so the ink stays a plump leaf while the art
+                        // inside rolls edge-on.
+                        float t = floorHalf > 1e-6f ? lenScr / floorHalf : 0f;
+                        Vector3 dir = new Vector3(off.x, off.y, 0f) + normal * (floorHalf * (1f - t));
+                        float dl = dir.magnitude;
+                        dir = dl > 1e-6f ? dir / dl : normal;
+                        off = dir * (floorHalf + extra);
+                    }
+                }
+                else off += normal * extra;
+            }
 
             vertsBuf[i * 2] = center[i] + off;
             vertsBuf[i * 2 + 1] = center[i] - off;
@@ -247,12 +278,19 @@ public class Ribbon2D : MonoBehaviour
                 cw0 = Mathf.Cos(TwistAngle(0f, clockPhase));
                 cw1 = Mathf.Cos(TwistAngle(1f, clockPhase));
             }
+            // Outline clones (capExtra > 0) hold the same apparent-width floor as the strip.
+            float capFrac0 = Mathf.Abs(cw0), capFrac1 = Mathf.Abs(cw1);
+            if (twist3D && capExtra > 0f)
+            {
+                capFrac0 = Mathf.Max(capFrac0, Mathf.Clamp01(twistMinWidthFrac));
+                capFrac1 = Mathf.Max(capFrac1, Mathf.Clamp01(twistMinWidthFrac));
+            }
             ti = BuildCap(v, 0, center[0], center[0] - center[1],
-                widthCurve.Evaluate(0f) * widthScale * Mathf.Abs(cw0) + capExtra,
+                widthCurve.Evaluate(0f) * widthScale * capFrac0 + capExtra,
                 ShadeTwist(Color.Lerp(colorStart, colorEnd, 0f), cw0), 0f, cap, ti, colorsDirty);
             v += cap;
             BuildCap(v, (N - 1) * 2, center[N - 1], center[N - 1] - center[N - 2],
-                widthCurve.Evaluate(1f) * widthScale * Mathf.Abs(cw1) + capExtra,
+                widthCurve.Evaluate(1f) * widthScale * capFrac1 + capExtra,
                 ShadeTwist(Color.Lerp(colorStart, colorEnd, 1f), cw1), 1f, cap, ti, colorsDirty);
         }
 
