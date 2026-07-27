@@ -167,8 +167,30 @@ public class Mermaid2DBootstrap : MonoBehaviour
     [Range(3, 16)] public int fluke3DTubeSides = 9;
     [Tooltip("Directional key light spawned with the fin so the golden-scales shader has light to catch — the 2D sprites are unlit and ignore it. Live.")]
     public bool fluke3DLight = true;
-    [Tooltip("Optional material override for the 3D lobes. Empty = Mermaid/GoldScales2D (the SampleScene look, sorted into the 2D sprite order).")]
+    [Tooltip("Optional material override for the 3D lobes. Empty = Mermaid/FlukeToon2D (BotW-style flat cel look that blends with the 2D art). For the SampleScene gold-scales look, create a material using Mermaid/GoldScales2D and drop it here.")]
     public Material fluke3DMaterial;
+    [Tooltip("Skirt-hem flutter: the lobes' RIM ripples faster than the slow bone wave, like fabric edges. World units; 0 = off. Live.")]
+    [Range(0f, 0.4f)] public float fluke3DRippleAmp = 0.07f;
+    [Tooltip("How many flutter waves fit along each lobe. Live.")]
+    [Range(0.2f, 6f)] public float fluke3DRippleCycles = 2.2f;
+    [Tooltip("Flutter speed, waves per second (travels root → tip). Live.")]
+    [Range(0f, 6f)] public float fluke3DRippleHz = 1.7f;
+    [Tooltip("Concentrates the flutter at the outermost rim. Higher = only the very edge moves, the lobe center stays on the bones. Live.")]
+    [Range(0.5f, 6f)] public float fluke3DRippleEdgeBias = 2f;
+    [Tooltip("true = leading/trailing edges curl OPPOSITE ways (the rotational lever-arm flutter the 3D flukes had); false = the whole rim flaps together like a flag edge. Live.")]
+    public bool fluke3DRippleCurl = true;
+
+    [Header("Fluke Toon Look (2-tone cel so the 3D fin reads as 2D art; live)")]
+    [Tooltip("Lit-side color of the cel shading.")]
+    public Color fluke3DToonBase = new Color(1f, 0.75f, 0.28f);
+    [Tooltip("Shade-side color of the cel shading.")]
+    public Color fluke3DToonShade = new Color(0.62f, 0.40f, 0.10f);
+    [Tooltip("Width of the contour band drawn ON the fin surface where it turns edge-on (the moving 'shading' lines as it ripples). With the outline hull providing the real silhouette stroke, you can lower this — or set 0 to turn the surface ink off entirely.")]
+    [Range(0f, 0.6f)] public float fluke3DToonInkWidth = 0.28f;
+    [Tooltip("Color of that surface contour band. Pick something softer than pure black if the bands read too harsh (the true silhouette outline keeps using outlineColor regardless).")]
+    public Color fluke3DToonInkColor = new Color(0.35f, 0.20f, 0.10f);
+    [Tooltip("Darkens the FAR lobe's toon colors so the two lobes read as clearly separate (a classic 2D depth cue). 0 = identical lobes. Ignored when a custom fluke3DMaterial is assigned.")]
+    [Range(0f, 0.7f)] public float fluke3DFarLobeDarken = 0.25f;
 
     [Header("Hair (live-editable; some fields rebuild the hair on change)")]
     [Range(1, 80)] public int hairStrandCount = 26;
@@ -456,6 +478,10 @@ public class Mermaid2DBootstrap : MonoBehaviour
     readonly List<float> fluke3DBoneT = new List<float>();   // 0 at lobe root → 1 at tip; lag re-derived live
     readonly TubeRenderer[] fluke3DTubes = new TubeRenderer[2];
     Light fluke3DLightRef;
+    readonly Material[] fluke3DMatRefs = new Material[2];   // per-lobe toon instances, for live color pushes
+    readonly MeshRenderer[] fluke3DHulls = new MeshRenderer[2];   // inverted-hull outline twins
+    readonly MeshFilter[] fluke3DHullMfs = new MeshFilter[2];
+    Material fluke3DHullMat;
     readonly HashSet<Mermaid2DBone> armBoneSet = new HashSet<Mermaid2DBone>();
 
     // Seaweed runtime state (both depth layers) — kept so the motion fields tune live.
@@ -573,6 +599,10 @@ public class Mermaid2DBootstrap : MonoBehaviour
         fluke3DBoneT.Clear();
         fluke3DTubes[0] = fluke3DTubes[1] = null;
         fluke3DLightRef = null;
+        fluke3DMatRefs[0] = fluke3DMatRefs[1] = null;
+        fluke3DHulls[0] = fluke3DHulls[1] = null;
+        fluke3DHullMfs[0] = fluke3DHullMfs[1] = null;
+        fluke3DHullMat = null;
         armBoneSet.Clear();
         seaweedLayers.Clear();
         foragerRef = null;
@@ -1224,7 +1254,7 @@ public class Mermaid2DBootstrap : MonoBehaviour
             tgo.transform.SetParent(root, false);
             tgo.AddComponent<MeshFilter>();
             var mr = tgo.AddComponent<MeshRenderer>();
-            mr.sharedMaterial = Fluke3DMaterial();
+            mr.sharedMaterial = Fluke3DMaterial(s);   // per-lobe instance (far lobe darkens)
             mr.shadowCastingMode = UnityEngine.Rendering.ShadowCastingMode.Off;
             mr.receiveShadows = false;
             // Transparent-queue shader + sortingOrder slots the tubes into the sprite sort;
@@ -1244,6 +1274,29 @@ public class Mermaid2DBootstrap : MonoBehaviour
             tube.capEnds = true;
             fluke3DTubes[s] = tube;
             tailGameObjects.Add(tgo);
+
+            // Inverted-hull outline twin: shares the tube's LIVE mesh (deforms for free),
+            // pushed outward along the 3D normals by the unified outline width and drawn at
+            // the outline depth — a full-thickness stroke even when the fin is edge-on,
+            // which is exactly where a scaled 2D clone would collapse.
+            if (fluke3DHullMat == null)
+            {
+                var hsh = Shader.Find("Mermaid/FlukeOutlineHull2D");
+                fluke3DHullMat = hsh != null
+                    ? new Material(hsh) { renderQueue = 3000 }
+                    : SpriteMat(outlineColor);
+            }
+            var hgo = new GameObject("OutlineHull");
+            hgo.transform.SetParent(tgo.transform, false);
+            var hmf = hgo.AddComponent<MeshFilter>();
+            hmf.sharedMesh = tgo.GetComponent<MeshFilter>().sharedMesh;
+            var hmr = hgo.AddComponent<MeshRenderer>();
+            hmr.sharedMaterial = fluke3DHullMat;
+            hmr.sortingOrder = OrderOutline;
+            hmr.shadowCastingMode = UnityEngine.Rendering.ShadowCastingMode.Off;
+            hmr.receiveShadows = false;
+            fluke3DHulls[s] = hmr;
+            fluke3DHullMfs[s] = hmf;
         }
         RefreshFluke3DTubes();
 
@@ -1278,16 +1331,17 @@ public class Mermaid2DBootstrap : MonoBehaviour
         }
     }
 
-    Material Fluke3DMaterial()
+    Material Fluke3DMaterial(int lobe)
     {
-        if (fluke3DMaterial != null) return fluke3DMaterial;
-        var sh = Shader.Find("Mermaid/GoldScales2D");
+        fluke3DMatRefs[lobe] = null;
+        if (fluke3DMaterial != null) return fluke3DMaterial;      // custom art: shared as-is
+        var sh = Shader.Find("Mermaid/FlukeToon2D");              // flat cel = blends with 2D art
+        if (sh == null) sh = Shader.Find("Mermaid/GoldScales2D"); // SampleScene look
         if (sh == null) sh = Shader.Find("Mermaid/GoldScales");   // opaque fallback
         if (sh != null)
         {
-            var m = new Material(sh);
-            m.renderQueue = 3000;   // transparent queue so sortingOrder applies
-            return m;
+            fluke3DMatRefs[lobe] = new Material(sh) { renderQueue = 3000 };   // sortingOrder applies
+            return fluke3DMatRefs[lobe];
         }
         return SpriteMat(goldDeepColor);
     }
@@ -1630,6 +1684,10 @@ public class Mermaid2DBootstrap : MonoBehaviour
         fluke3DBoneT.Clear();
         fluke3DTubes[0] = fluke3DTubes[1] = null;
         fluke3DLightRef = null;
+        fluke3DMatRefs[0] = fluke3DMatRefs[1] = null;
+        fluke3DHulls[0] = fluke3DHulls[1] = null;
+        fluke3DHullMfs[0] = fluke3DHullMfs[1] = null;
+        fluke3DHullMat = null;
         tailBonesOrdered.Clear();
 
         for (int i = 0; i < tailGameObjects.Count; i++)
@@ -1943,6 +2001,50 @@ public class Mermaid2DBootstrap : MonoBehaviour
                 b.maxBendAngleDeg = flukeMaxBendDeg;
             }
             RefreshFluke3DTubes();
+
+            // Skirt-hem flutter, offset between the lobes so they never flap in sync.
+            for (int s = 0; s < 2; s++)
+            {
+                var tube = fluke3DTubes[s];
+                if (tube == null) continue;
+                tube.rippleAmplitude = fluke3DRippleAmp;
+                tube.rippleCycles = fluke3DRippleCycles;
+                tube.rippleHz = fluke3DRippleHz;
+                tube.rippleEdgeBias = fluke3DRippleEdgeBias;
+                tube.rippleCurl = fluke3DRippleCurl;
+                tube.ripplePhaseDeg = s == 0 ? 0f : 137f;
+            }
+
+            // Toon look tuning (ink follows the unified outline color for a matched style).
+            // The FAR lobe (s == 0, +Z) darkens so the two lobes read as separate shapes.
+            for (int s = 0; s < 2; s++)
+            {
+                var mat = fluke3DMatRefs[s];
+                if (mat == null || !mat.HasProperty("_ToonBase")) continue;
+                float k = s == 0 ? 1f - Mathf.Clamp01(fluke3DFarLobeDarken) : 1f;
+                Color bc = fluke3DToonBase, sc = fluke3DToonShade;
+                mat.SetColor("_ToonBase", new Color(bc.r * k, bc.g * k, bc.b * k, bc.a));
+                mat.SetColor("_ToonShade", new Color(sc.r * k, sc.g * k, sc.b * k, sc.a));
+                mat.SetColor("_InkColor", fluke3DToonInkColor);
+                mat.SetFloat("_InkWidth", fluke3DToonInkWidth);
+            }
+
+            // True silhouette outline: the hulls follow the unified-outline settings so
+            // they union with the BlackClones stroke as one continuous ink line.
+            bool hullOn = outlineMode == OutlineMode.BlackClones && outlineWidth > 0.0001f;
+            for (int s = 0; s < 2; s++)
+            {
+                if (fluke3DHulls[s] == null) continue;
+                fluke3DHulls[s].enabled = hullOn;
+                // Re-point at the tube's mesh in case it was recreated (editor domain reload).
+                if (fluke3DTubes[s] != null && fluke3DHullMfs[s] != null)
+                    fluke3DHullMfs[s].sharedMesh = fluke3DTubes[s].GetComponent<MeshFilter>().sharedMesh;
+            }
+            if (fluke3DHullMat != null && fluke3DHullMat.HasProperty("_Width"))
+            {
+                fluke3DHullMat.SetColor("_Color", outlineColor);
+                fluke3DHullMat.SetFloat("_Width", outlineWidth);
+            }
         }
         if (fluke3DLightRef != null) fluke3DLightRef.enabled = fluke3DLight;
 

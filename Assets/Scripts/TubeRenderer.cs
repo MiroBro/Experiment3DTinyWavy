@@ -25,6 +25,20 @@ public class TubeRenderer : MonoBehaviour
     [Tooltip("Add flat round caps so the tube isn't open at the ends.")]
     public bool capEnds = true;
 
+    [Header("Rim Ripple (skirt-hem flutter, 0 = off)")]
+    [Tooltip("World-unit amplitude of a traveling wave that displaces the WIDE edges of a flat tube along its thin axis — the rim flutters faster than the bone wave, like a skirt hem. The center of each ring stays on the bones. 0 disables (default; the 3D scene never sets this).")]
+    public float rippleAmplitude = 0f;
+    [Tooltip("How many ripple waves fit along the tube's length.")]
+    public float rippleCycles = 2.2f;
+    [Tooltip("Ripple speed, waves per second (travels root → tip).")]
+    public float rippleHz = 1.7f;
+    [Tooltip("Concentrates the flutter at the wide rim: displacement scales with |cos(ring angle)|^bias, so higher = only the outermost edge moves.")]
+    public float rippleEdgeBias = 2f;
+    [Tooltip("true = the two wide edges curl OPPOSITE ways (rotational hem twist — the lever-arm look flat tubes had from rotation lag); false = the whole rim flaps together like a flag edge.")]
+    public bool rippleCurl = true;
+    [Tooltip("Phase offset in degrees, so paired tubes (two fluke lobes) don't flutter in sync.")]
+    public float ripplePhaseDeg = 0f;
+
     Mesh mesh;
     Vector3[] vertsBuf;
     Vector2[] uvsBuf;
@@ -136,6 +150,27 @@ public class TubeRenderer : MonoBehaviour
         r = r.normalized;
         u = Vector3.Cross(prevTangent, r).normalized;
 
+        // Rim ripple clock (realtime in edit mode, where Time.time is frozen but the 2D
+        // scene's animated preview repaints continuously). Flutter scales with the LOCAL
+        // radius (like a real hem: wide fabric flutters, the tapering tip barely moves) —
+        // find the max radius so the widest ring gets the full amplitude.
+        bool rippling = rippleAmplitude != 0f;
+        float ripplePhase = 0f;
+        float rippleMaxRad = 0f;
+        if (rippling)
+        {
+            float clock = Application.isPlaying ? Time.time : Time.realtimeSinceStartup;
+            ripplePhase = clock * rippleHz * 2f * Mathf.PI + ripplePhaseDeg * Mathf.Deg2Rad;
+            for (int i = 0; i < N; i++)
+            {
+                float rad = (radii != null && i < radii.Length)
+                    ? radii[i]
+                    : (radii != null && radii.Length > 0 ? radii[radii.Length - 1] : 0.1f);
+                rippleMaxRad = Mathf.Max(rippleMaxRad, rad);
+            }
+            if (rippleMaxRad < 1e-5f) rippling = false;
+        }
+
         int v = 0;
         for (int i = 0; i < N; i++)
         {
@@ -179,11 +214,33 @@ public class TubeRenderer : MonoBehaviour
             if (aspectRatios != null && aspectRatios.Length > 0)
                 ar = (i < aspectRatios.Length) ? aspectRatios[i] : aspectRatios[aspectRatios.Length - 1];
 
+            // Ripple wave for this ring: travels root → tip, faded to zero at the root so
+            // the tube stays welded to its attachment, and scaled by the local radius so
+            // the flutter peters out with the leaf taper instead of fattening the tip.
+            float ringWave = 0f;
+            if (rippling)
+            {
+                float along = (N > 1) ? i / (float)(N - 1) : 0f;
+                ringWave = Mathf.Sin(along * rippleCycles * 2f * Mathf.PI - ripplePhase)
+                         * rippleAmplitude * along * (radius / rippleMaxRad);
+            }
+
             for (int k = 0; k < S; k++)
             {
                 float angle = k * 2f * Mathf.PI / S;
-                Vector3 dir = Mathf.Cos(angle) * r + Mathf.Sin(angle) * u * ar;
-                vertsBuf[v++] = localPts[i] + dir * radius;
+                float cosA = Mathf.Cos(angle);
+                Vector3 dir = cosA * r + Mathf.Sin(angle) * u * ar;
+                Vector3 vert = localPts[i] + dir * radius;
+                if (rippling)
+                {
+                    // Edge weight: 1 at the wide rim (cos ±1), 0 at the thin faces. Signed
+                    // (curl) rocks the two edges opposite ways — the rotational lever-arm
+                    // flutter; unsigned flaps the whole rim together.
+                    float edge = Mathf.Pow(Mathf.Abs(cosA), Mathf.Max(0.1f, rippleEdgeBias));
+                    if (rippleCurl) edge *= Mathf.Sign(cosA);
+                    vert += u * (ringWave * edge);
+                }
+                vertsBuf[v++] = vert;
             }
             prevTangent = t;
         }
