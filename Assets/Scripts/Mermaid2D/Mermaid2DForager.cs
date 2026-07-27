@@ -121,6 +121,10 @@ public class Mermaid2DForager : MonoBehaviour
     /// <summary>True while her hands are sifting through the grass (glints can surface).</summary>
     public bool IsRummaging => phase == Phase.Rummage;
 
+    /// <summary>Hold-to-help minigame: external multiplier on the RUMMAGE phase timer only
+    /// (1 = normal speed). Set every frame by the game manager while the player holds.</summary>
+    [System.NonSerialized] public float rummageSpeedMultiplier = 1f;
+
     /// <summary>0 = cruising, 1 = fully in the rummage pose (eased). The bootstrap uses this
     /// to calm the arm flow while she digs.</summary>
     public float RummageEnvelope { get; private set; }
@@ -145,7 +149,7 @@ public class Mermaid2DForager : MonoBehaviour
         }
 
         float dt = Time.deltaTime;
-        phaseT += dt;
+        phaseT += dt * (phase == Phase.Rummage ? Mathf.Clamp(rummageSpeedMultiplier, 0.05f, 5f) : 1f);
 
         if (wasSuspended)
         {

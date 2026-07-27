@@ -120,6 +120,28 @@ public class Mermaid2DBootstrap : MonoBehaviour
     [Range(0.05f, 5f)]
     public float flukeFlowMultiplier = 1.52f;
 
+    [Header("Fluke 3D Ribbon (live) — out-of-plane tilt + traveling twist wave")]
+    [Tooltip("Superimpose a 3D ribbon illusion on the two fluke lobes: they tilt toward horizontal and a twist wave rolls down them, foreshortening the painted texture with fake front/edge/back shading — the gorgeous motion the 3D flukes had, on the 2D rig.")]
+    public bool fluke3DRibbon = true;
+    [Tooltip("How far the lobes lie down toward horizontal, degrees. 0 = flat to camera (the old look), 90 = edge-on sliver.")]
+    [Range(0f, 85f)] public float flukeTiltDeg = 40f;
+    [Tooltip("Traveling twist-wave amplitude, degrees on top of the tilt.")]
+    [Range(0f, 80f)] public float flukeRibbonWaveDeg = 32f;
+    [Tooltip("Twist-wave beat, Hz. Default matches porpoiseFrequency so the ribbon rolls once per tail beat.")]
+    public float flukeRibbonWaveHz = 0.83f;
+    [Tooltip("Wave cycles along each lobe. <1 = one gentle roll; higher = corkscrew.")]
+    [Range(0f, 3f)] public float flukeRibbonWaveCycles = 0.7f;
+    [Tooltip("Phase difference between the up and down lobes, degrees. 0 = lockstep mirror; ~110 = they alternate like two loose ribbon tails.")]
+    public float flukeLobePhaseDeg = 110f;
+    [Tooltip("Fake-light shading strength on the twisting lobes (darkens toward edge-on).")]
+    [Range(0f, 1f)] public float flukeRibbonShade = 0.55f;
+    [Tooltip("Tint multiplied in while a lobe's BACK face shows — slightly darker/cooler sells the flip.")]
+    public Color flukeRibbonBackTint = new Color(0.80f, 0.74f, 0.86f);
+    [Tooltip("Fake 3/4-view: how much of the roll shears into a VISIBLE vertical lean. 0 = strict side view (the roll only pinches the width — reads flat); ~0.45 = edges undulate like a waving flag, the way the 3D flukes read from their angled camera. Negative = viewed from below.")]
+    [Range(-1f, 1f)] public float flukeRibbonDepthSkew = 0.45f;
+    [Tooltip("Motion-driven roll: extra twist from each lobe's ACTUAL bending as the tail whips, so rolls chase her movement instead of a metronome. This is most of what made the 3D flukes feel alive. 0 = clock wave only.")]
+    [Range(0f, 3f)] public float flukeRibbonBendRoll = 0.6f;
+
     [Header("Hair (live-editable; some fields rebuild the hair on change)")]
     [Range(1, 80)] public int hairStrandCount = 26;
     [Range(3, 48)] public int hairBonesPerStrand = 34;
@@ -400,6 +422,7 @@ public class Mermaid2DBootstrap : MonoBehaviour
     readonly List<Mermaid2DBone> tailBonesOrdered = new List<Mermaid2DBone>();
     readonly HashSet<Mermaid2DBone> tailBoneSet = new HashSet<Mermaid2DBone>();
     readonly HashSet<Mermaid2DBone> flukeBoneSet = new HashSet<Mermaid2DBone>();
+    readonly Ribbon2D[] flukeRibbons = new Ribbon2D[2];   // [0]=Up lobe, [1]=Down lobe — twist tunes live
     readonly HashSet<Mermaid2DBone> armBoneSet = new HashSet<Mermaid2DBone>();
 
     // Seaweed runtime state (both depth layers) — kept so the motion fields tune live.
@@ -507,6 +530,7 @@ public class Mermaid2DBootstrap : MonoBehaviour
         tailBonesOrdered.Clear();
         tailBoneSet.Clear();
         flukeBoneSet.Clear();
+        flukeRibbons[0] = flukeRibbons[1] = null;
         armBoneSet.Clear();
         seaweedLayers.Clear();
         foragerRef = null;
@@ -964,6 +988,20 @@ public class Mermaid2DBootstrap : MonoBehaviour
             p.clone.extraWidth = outlineWidth;
             p.clone.colorStart = outlineColor;
             p.clone.colorEnd = outlineColor;
+            // Twist geometry must match the source exactly or the stroke detaches from the
+            // narrowed silhouette — but shading stays off so the ink keeps its flat color.
+            p.clone.twist3D = p.source.twist3D;
+            p.clone.twistBaseDeg = p.source.twistBaseDeg;
+            p.clone.twistWaveDeg = p.source.twistWaveDeg;
+            p.clone.twistWaveHz = p.source.twistWaveHz;
+            p.clone.twistWaveCycles = p.source.twistWaveCycles;
+            p.clone.twistPhaseDeg = p.source.twistPhaseDeg;
+            p.clone.twistEnvelope = p.source.twistEnvelope;
+            p.clone.twistViewSkew = p.source.twistViewSkew;
+            p.clone.twistCurvatureGain = p.source.twistCurvatureGain;
+            p.clone.twistAnimScale = p.source.twistAnimScale;
+            p.clone.twistShade = 0f;
+            p.clone.twistBackTint = Color.white;
         }
 
         for (int i = 0; i < outlineSprites.Count; i++)
@@ -1078,6 +1116,7 @@ public class Mermaid2DBootstrap : MonoBehaviour
                 flukeArt != null ? Color.white : goldDeepColor,
                 flukeArt != null ? Color.white : flukeTipCol,
                 OrderFluke, flukeArt);
+            flukeRibbons[s] = ribbon;   // twist fields are pushed every ApplyLiveTick
             tailGameObjects.Add(ribbon.gameObject);
         }
     }
@@ -1401,6 +1440,7 @@ public class Mermaid2DBootstrap : MonoBehaviour
         tailFlukeBones.Clear();
         tailBoneSet.Clear();
         flukeBoneSet.Clear();
+        flukeRibbons[0] = flukeRibbons[1] = null;
         tailBonesOrdered.Clear();
 
         for (int i = 0; i < tailGameObjects.Count; i++)
@@ -1668,6 +1708,26 @@ public class Mermaid2DBootstrap : MonoBehaviour
             if (tailBonesOrdered[i] != null) tailBonesOrdered[i].maxBendAngleDeg = tailMaxBendDeg;
         foreach (var fb in flukeBoneSet)
             if (fb != null) fb.maxBendAngleDeg = flukeMaxBendDeg;
+
+        // 3c. Fluke 3D ribbon twist — live tuning, per-lobe phase split, and the wave
+        // amplitude rides the swim liveliness so the ribbon calms while she rummages.
+        float twistLiveliness = swimmer != null ? Mathf.Lerp(0.35f, 1f, Mathf.Clamp01(swimmer.motionScale)) : 1f;
+        for (int s = 0; s < 2; s++)
+        {
+            var fr = flukeRibbons[s];
+            if (fr == null) continue;
+            fr.twist3D = fluke3DRibbon;
+            fr.twistBaseDeg = flukeTiltDeg;
+            fr.twistWaveDeg = flukeRibbonWaveDeg;
+            fr.twistWaveHz = flukeRibbonWaveHz;
+            fr.twistWaveCycles = flukeRibbonWaveCycles;
+            fr.twistPhaseDeg = (s == 0 ? 0.5f : -0.5f) * flukeLobePhaseDeg;
+            fr.twistShade = flukeRibbonShade;
+            fr.twistBackTint = flukeRibbonBackTint;
+            fr.twistViewSkew = flukeRibbonDepthSkew;
+            fr.twistCurvatureGain = flukeRibbonBendRoll;
+            fr.twistAnimScale = twistLiveliness;
+        }
 
         // 4. Live-editable hair root position + hair widths.
         if (headScalp != null) headScalp.localPosition = (Vector3)hairRootOffset;

@@ -40,6 +40,33 @@ public class Ribbon2D : MonoBehaviour
     [Tooltip("Extra half-width added uniformly along the whole ribbon (world units). Used by the outline system: an outline clone is the same ribbon with extraWidth = stroke width.")]
     public float extraWidth = 0f;
 
+    [Header("3D Ribbon Twist (out-of-plane tilt illusion)")]
+    [Tooltip("Rotate each cross-section around the centerline tangent so the ribbon tilts out of the screen plane. Under the 2D camera this foreshortens the width, and a traveling wave rolls a twist down the length — the flat texture reads as a 3D ribbon (the fluke trick).")]
+    public bool twist3D = false;
+    [Tooltip("Constant tilt out of the screen plane, degrees. 0 = flat to camera (full width), 90 = edge-on sliver. ~40 reads as a fin lying mostly horizontal.")]
+    public float twistBaseDeg = 40f;
+    [Tooltip("Traveling twist-wave amplitude, degrees on top of the base tilt.")]
+    public float twistWaveDeg = 32f;
+    [Tooltip("Twist-wave beat, Hz.")]
+    public float twistWaveHz = 0.83f;
+    [Tooltip("How many full wave cycles fit along the ribbon length. <1 = one gentle roll, higher = corkscrew.")]
+    public float twistWaveCycles = 0.7f;
+    [Tooltip("Phase offset, degrees — give paired ribbons (two fluke lobes) different offsets so they alternate instead of moving in lockstep.")]
+    public float twistPhaseDeg = 0f;
+    [Tooltip("Twist strength along the length: X 0 = first point (keep it 0 there so the ribbon stays welded flat to whatever it attaches to), X 1 = far tip.")]
+    public AnimationCurve twistEnvelope = AnimationCurve.EaseInOut(0f, 0f, 1f, 1f);
+    [Tooltip("Fake-lighting strength: darkens the vertex color toward edge-on so the roll catches 'light'. 0 = geometry only (outline clones use 0).")]
+    [Range(0f, 1f)]
+    public float twistShade = 0.55f;
+    [Tooltip("Extra tint multiplied in while the BACK face shows (twist past 90°) — slightly darker/cooler sells the ribbon flipping over.")]
+    public Color twistBackTint = new Color(0.80f, 0.74f, 0.86f);
+    [Tooltip("Fake 3/4-view shear: how much of the out-of-plane roll leans into a VISIBLE vertical offset. 0 = strict side view (the roll only pinches the width — reads flat); ~0.45 = the surface visibly leans and the edges undulate like a waving flag. Negative flips the apparent camera side.")]
+    public float twistViewSkew = 0.45f;
+    [Tooltip("Motion-driven roll: extra twist from the centerline's local bend, in twist-degrees per (degree of bend per world unit). The lagged bones bend when the tail whips, so rolls chase the actual motion instead of the clock. ~0.6; 0 = clock wave only.")]
+    public float twistCurvatureGain = 0.6f;
+    [Tooltip("External per-frame multiplier on the WAVE amplitude only (not the base tilt) — the bootstrap feeds the swim liveliness in here so the ribbon calms when she stops.")]
+    [System.NonSerialized] public float twistAnimScale = 1f;
+
     Mesh mesh;
     Vector3[] center;
     Vector3[] vertsBuf;
@@ -113,9 +140,26 @@ public class Ribbon2D : MonoBehaviour
             topologyDirty = true;
         }
 
-        bool colorsDirty = topologyDirty || colorStart != lastColorStart || colorEnd != lastColorEnd;
+        // A twisting ribbon re-shades its vertex colors every frame (facing changes).
+        bool colorsDirty = topologyDirty || twist3D || colorStart != lastColorStart || colorEnd != lastColorEnd;
 
-        // 2) Two verts per sample, offset along the in-plane normal.
+        // Twist phase clock. Time.time is frozen in edit mode, where the bootstrap's
+        // animated preview repaints continuously — realtimeSinceStartup keeps the wave
+        // rolling there too. Source ribbon and its outline clone both sample this within
+        // the same frame, so their geometry stays in step.
+        float clockPhase = 0f;
+        if (twist3D)
+        {
+            float clock = Application.isPlaying ? Time.time : Time.realtimeSinceStartup;
+            clockPhase = clock * twistWaveHz * 2f * Mathf.PI + twistPhaseDeg * Mathf.Deg2Rad;
+        }
+
+        // 2) Two verts per sample. Flat mode: offset along the in-plane normal. Twist mode:
+        //    the cross-section rotates around the tangent by tw — the in-plane extent
+        //    shrinks with cos(tw) (orthographic foreshortening) and the rest leaves the
+        //    plane as z (invisible to the 2D camera, harmless for sorting which is purely
+        //    sortingOrder). extraWidth (outline stroke) is added AFTER foreshortening so
+        //    the ink stays a constant thickness around the narrowed silhouette.
         Vector3 lastGoodTangent = Vector3.right;
         for (int i = 0; i < N; i++)
         {
@@ -128,13 +172,41 @@ public class Ribbon2D : MonoBehaviour
 
             Vector3 normal = new Vector3(-tan.y, tan.x, 0f);
             float t01 = (float)i / (N - 1);
-            float halfW = Mathf.Max(0.0005f, widthCurve.Evaluate(t01) * widthScale) + Mathf.Max(0f, extraWidth);
+            float baseHalf = Mathf.Max(0.0005f, widthCurve.Evaluate(t01) * widthScale);
+            float extra = Mathf.Max(0f, extraWidth);
 
-            vertsBuf[i * 2] = center[i] + normal * halfW;
-            vertsBuf[i * 2 + 1] = center[i] - normal * halfW;
+            float cw = 1f, sw = 0f;
+            if (twist3D)
+            {
+                float tw = TwistAngle(t01, clockPhase);
+                if (twistCurvatureGain != 0f && i > 0 && i < N - 1)
+                {
+                    // Motion-driven roll: local bend of the lagged centerline (degrees per
+                    // world unit) feeds the twist, so rolls travel with the wave the bones
+                    // are actually carrying instead of a fixed-clock sine.
+                    Vector3 d0 = center[i] - center[i - 1];
+                    Vector3 d1 = center[i + 1] - center[i];
+                    float segLen = Mathf.Max(1e-4f, d1.magnitude);
+                    float bendPerUnit = Vector2.SignedAngle(d0, d1) / segLen;
+                    float env = twistEnvelope != null ? Mathf.Clamp01(twistEnvelope.Evaluate(t01)) : t01;
+                    tw += Mathf.Clamp(bendPerUnit * twistCurvatureGain, -60f, 60f) * Mathf.Deg2Rad * env;
+                }
+                cw = Mathf.Cos(tw); sw = Mathf.Sin(tw);
+            }
+            // Sign of cw carries through so the texture mirror-flips when the back shows.
+            float side = cw >= 0f ? 1f : -1f;
+            Vector3 off = normal * (baseHalf * cw + side * extra) + new Vector3(0f, 0f, baseHalf * sw);
+            // Oblique 3/4-view: shear the out-of-plane part into visible Y. The two verts
+            // get +off/−off, so the cross-section visibly LEANS on screen and a traveling
+            // roll makes the edges undulate — the waving-flag/ribbon read the strict
+            // side-on projection can't produce on its own.
+            if (twist3D) off.y += off.z * twistViewSkew;
+
+            vertsBuf[i * 2] = center[i] + off;
+            vertsBuf[i * 2 + 1] = center[i] - off;
             if (colorsDirty)
             {
-                Color col = Color.Lerp(colorStart, colorEnd, t01);
+                Color col = ShadeTwist(Color.Lerp(colorStart, colorEnd, t01), cw);
                 colsBuf[i * 2] = col;
                 colsBuf[i * 2 + 1] = col;
             }
@@ -166,12 +238,22 @@ public class Ribbon2D : MonoBehaviour
         {
             int ti = (N - 1) * 6;
             int v = N * 2;
-            float extra = Mathf.Max(0f, extraWidth);
+            float capExtra = Mathf.Max(0f, extraWidth);
+            // Caps shrink and shade with the end twist, so a rolled-over tip keeps a
+            // proportionate rounded end instead of a full-width lollipop.
+            float cw0 = 1f, cw1 = 1f;
+            if (twist3D)
+            {
+                cw0 = Mathf.Cos(TwistAngle(0f, clockPhase));
+                cw1 = Mathf.Cos(TwistAngle(1f, clockPhase));
+            }
             ti = BuildCap(v, 0, center[0], center[0] - center[1],
-                widthCurve.Evaluate(0f) * widthScale + extra, Color.Lerp(colorStart, colorEnd, 0f), 0f, cap, ti, colorsDirty);
+                widthCurve.Evaluate(0f) * widthScale * Mathf.Abs(cw0) + capExtra,
+                ShadeTwist(Color.Lerp(colorStart, colorEnd, 0f), cw0), 0f, cap, ti, colorsDirty);
             v += cap;
             BuildCap(v, (N - 1) * 2, center[N - 1], center[N - 1] - center[N - 2],
-                widthCurve.Evaluate(1f) * widthScale + extra, Color.Lerp(colorStart, colorEnd, 1f), 1f, cap, ti, colorsDirty);
+                widthCurve.Evaluate(1f) * widthScale * Mathf.Abs(cw1) + capExtra,
+                ShadeTwist(Color.Lerp(colorStart, colorEnd, 1f), cw1), 1f, cap, ti, colorsDirty);
         }
 
         // 4) Upload. Full re-upload only when topology changed; otherwise just positions
@@ -193,6 +275,33 @@ public class Ribbon2D : MonoBehaviour
         lastColorStart = colorStart;
         lastColorEnd = colorEnd;
         mesh.RecalculateBounds();
+    }
+
+    // Out-of-plane rotation of the cross-section at t01 along the ribbon: base tilt plus a
+    // wave traveling first-point → tip, all scaled by the length envelope so the attachment
+    // end stays flat/welded.
+    float TwistAngle(float t01, float clockPhase)
+    {
+        float env = twistEnvelope != null ? Mathf.Clamp01(twistEnvelope.Evaluate(t01)) : t01;
+        float wave = Mathf.Sin(clockPhase - t01 * twistWaveCycles * 2f * Mathf.PI);
+        return (twistBaseDeg + wave * twistWaveDeg * twistAnimScale) * Mathf.Deg2Rad * env;
+    }
+
+    // Fake lighting for the twist: full-bright facing the camera, dark toward edge-on, and
+    // the back face (cos < 0) additionally takes twistBackTint so the flip reads.
+    Color ShadeTwist(Color col, float cosTw)
+    {
+        if (!twist3D || twistShade <= 0f) return col;
+        float facing = Mathf.Abs(cosTw);
+        float bright = Mathf.Lerp(1f, Mathf.Lerp(0.35f, 1f, facing), twistShade);
+        if (cosTw < 0f)
+        {
+            col.r *= twistBackTint.r;
+            col.g *= twistBackTint.g;
+            col.b *= twistBackTint.b;
+        }
+        col.r *= bright; col.g *= bright; col.b *= bright;
+        return col;
     }
 
     // Fan of `cap` triangles bulging in `outDir` between edge verts (edgeIdx, edgeIdx+1).

@@ -15,12 +15,22 @@ public class GemGameManager : MonoBehaviour
 {
     public static GemGameManager Instance { get; private set; }
 
-    [Header("Glints (click-to-help minigame)")]
+    [Header("Glints (legacy click-to-help minigame — replaced by hold-to-help)")]
+    [Tooltip("Re-enable the old precision-click glints. OFF by default: the hold-to-help + brush-reveal minigames replace them.")]
+    public bool enableGlints = false;
     [Tooltip("Max glints that surface per rummage.")]
     public int glintsPerRummage = 3;
     [Tooltip("Seconds between glint spawns while she rummages.")]
     public Vector2 glintInterval = new Vector2(0.5f, 1.1f);
     public float glintLifetime = 1.4f;
+
+    [Header("Minigames (hold-to-help + brush-the-sand)")]
+    [Tooltip("How much faster she rummages while the player HOLDS the mouse button anywhere (position never matters). 1 = the hold does nothing.")]
+    public float holdHelpMultiplier = 1.8f;
+    [Tooltip("Brush reveal: seconds for an untouched sand mound to crumble open by itself (idle-friendly).")]
+    public float moundAutoRevealTime = 6f;
+    [Tooltip("Brush reveal: total cursor travel (screen pixels, while held) to fully scrub a mound open.")]
+    public float moundScrubPixels = 1800f;
 
     [Header("Wiring (found automatically)")]
     public Mermaid2DBootstrap bootstrap;
@@ -38,6 +48,15 @@ public class GemGameManager : MonoBehaviour
     int glintClicksThisRummage;
     float glintSpawnTimer;
     int glintsSpawnedThisRummage;
+    float holdHelpSecondsThisRummage;
+    float holdSparkTimer;
+
+    class RolledFind
+    {
+        public MermaidGameDefs.ItemDef item;
+        public int quality;
+        public bool lustrous;
+    }
     bool wasRummaging;
     float saveTimer;
     float defaultMinCruise = 1f, defaultMaxCruise = 5f;
@@ -105,6 +124,7 @@ public class GemGameManager : MonoBehaviour
         State.EnsureQuests();
         UpdateHaste();
         UpdateGlints();
+        UpdateHoldToHelp();
         HandleClicks();
         ApplySurfaceTripSettings();
 
@@ -126,36 +146,61 @@ public class GemGameManager : MonoBehaviour
         {
             Toast("Satchel is full! Sell some treasure.");
             glintClicksThisRummage = 0;
+            holdHelpSecondsThisRummage = 0f;
             return;
         }
 
         int finds = 1;
         if (State.HasBuff(MermaidGameDefs.BuffTwin) && rng.NextDouble() < 0.35) finds = 2;
 
-        for (int i = 0; i < finds && !State.SatchelFull; i++)
+        // Roll everything NOW (while the glint/hold counters from this rummage are hot),
+        // but deliver only when the sand mound is brushed open (or crumbles on its own).
+        var rolled = new List<RolledFind>();
+        for (int i = 0; i < finds; i++)
         {
-            var item = RollItem();
-            int quality = RollQuality();
-            bool lustrous = rng.NextDouble() < MermaidGameDefs.LustrousChance;
+            rolled.Add(new RolledFind
+            {
+                item = RollItem(),
+                quality = RollQuality(),
+                lustrous = rng.NextDouble() < MermaidGameDefs.LustrousChance,
+            });
+        }
+        glintClicksThisRummage = 0;
+        holdHelpSecondsThisRummage = 0f;
 
-            bool newDiscovery = !State.discovered.Contains(item.id);
-            State.AddItem(item.id, quality, lustrous);
+        var mound = SandMound2D.Spawn(spot, rolled[0].item.color, 21);
+        mound.autoRevealTime = Mathf.Max(1f, moundAutoRevealTime);
+        mound.scrubPixelsToReveal = moundScrubPixels;
+        Vector3 moundSpot = spot;
+        mound.onRevealed = () => DeliverFinds(rolled, moundSpot, handForFollow);
+    }
 
-            long gainedXp = item.xp * (quality + 1);
+    // The payoff half of the brush-reveal: award the rolled finds, pop the items out of
+    // the opened mound, toast the good news.
+    void DeliverFinds(List<RolledFind> rolled, Vector3 spot, Transform handForFollow)
+    {
+        for (int i = 0; i < rolled.Count; i++)
+        {
+            if (State.SatchelFull) break;
+            var find = rolled[i];
+
+            bool newDiscovery = !State.discovered.Contains(find.item.id);
+            State.AddItem(find.item.id, find.quality, find.lustrous);
+
+            long gainedXp = find.item.xp * (find.quality + 1);
             if (State.HasBuff(MermaidGameDefs.BuffXp)) gainedXp *= 2;
             int levelsGained = State.GainXp(gainedXp);
 
-            // Visual: pop the actual item out of the grass, colored like the item.
-            Color popColor = lustrous ? Color.Lerp(item.color, Color.white, 0.5f) : item.color;
-            CollectedItem2D.Spawn(spot + Vector3.right * (i * 0.15f), handForFollow, !item.isRock, popColor);
+            // Visual: pop the actual item out of the sand, colored like the item.
+            Color popColor = find.lustrous ? Color.Lerp(find.item.color, Color.white, 0.5f) : find.item.color;
+            CollectedItem2D.Spawn(spot + Vector3.right * (i * 0.15f), handForFollow, !find.item.isRock, popColor);
 
-            if (lustrous) Toast($"LUSTROUS {item.name}!!");
-            else if (newDiscovery) Toast($"New discovery: {item.name}!");
-            else if (quality >= 5) Toast($"{MermaidGameDefs.QualityNames[quality]} {item.name}!");
+            if (find.lustrous) Toast($"LUSTROUS {find.item.name}!!");
+            else if (newDiscovery) Toast($"New discovery: {find.item.name}!");
+            else if (find.quality >= 5) Toast($"{MermaidGameDefs.QualityNames[find.quality]} {find.item.name}!");
             if (levelsGained > 0) Toast($"Level up! Now level {State.level}.");
         }
 
-        glintClicksThisRummage = 0;
         State.Save();
         onStateChanged?.Invoke();
     }
@@ -197,6 +242,15 @@ public class GemGameManager : MonoBehaviour
         // Glint clicks: each click is worth GlintPower points; every 2 points is a
         // guaranteed grade-up chance (Cornerpond's OrbPower analog).
         int points = glintClicksThisRummage * State.GlintPower;
+
+        // Hold-to-help: a rummage held from start to finish is worth ~2 glint clicks, so
+        // the "Helping Hands" (GlintPower) upgrade keeps mattering with the new minigame.
+        if (forager != null && forager.rummageTime > 0.05f)
+        {
+            float heldFrac = Mathf.Clamp01(holdHelpSecondsThisRummage / forager.rummageTime);
+            points += Mathf.RoundToInt(heldFrac * 2f) * State.GlintPower;
+        }
+
         quality += points / 2;
         if ((points % 2) == 1 && rng.NextDouble() < 0.5) quality++;
 
@@ -213,10 +267,11 @@ public class GemGameManager : MonoBehaviour
         {
             glintsSpawnedThisRummage = 0;
             glintClicksThisRummage = 0;
+            holdHelpSecondsThisRummage = 0f;
             glintSpawnTimer = Random.Range(glintInterval.x, glintInterval.y) * 0.5f;
         }
         wasRummaging = rummaging;
-        if (!rummaging) return;
+        if (!rummaging || !enableGlints) return;
 
         glintSpawnTimer -= Time.deltaTime;
         if (glintSpawnTimer <= 0f && glintsSpawnedThisRummage < glintsPerRummage)
@@ -239,8 +294,35 @@ public class GemGameManager : MonoBehaviour
         State.GainXp(1);
     }
 
+    // Hold-to-help: holding the mouse button ANYWHERE (not over UI) makes her rummage
+    // faster, with sparkles drifting from the cursor to her digging hand. Held time also
+    // feeds the quality roll (the "Helping Hands" side of the old glint power).
+    void UpdateHoldToHelp()
+    {
+        if (forager == null) return;
+        var mouse = Mouse.current;
+        bool held = mouse != null && mouse.leftButton.isPressed && !SandFx.PointerOverUI();
+        bool rummaging = forager.IsRummaging;
+
+        forager.rummageSpeedMultiplier = (held && rummaging) ? Mathf.Max(1f, holdHelpMultiplier) : 1f;
+        if (!held || !rummaging) return;
+
+        // Accumulate in PHASE time (holding speeds the phase up, which would otherwise
+        // shrink the credit window): a start-to-finish hold always counts as a full hold.
+        holdHelpSecondsThisRummage += Time.deltaTime * Mathf.Max(1f, holdHelpMultiplier);
+        holdSparkTimer -= Time.deltaTime;
+        if (holdSparkTimer <= 0f && forager.handNear != null)
+        {
+            holdSparkTimer = 0.12f;
+            Vector2 world;
+            if (ScreenToWorld(mouse.position.ReadValue(), out world))
+                SandFx.HelpSpark(world, forager.handNear.transform, 22);
+        }
+    }
+
     void HandleClicks()
     {
+        if (!enableGlints) return;
         var mouse = Mouse.current;
         if (mouse == null || !mouse.leftButton.wasPressedThisFrame) return;
         if (glints.Count == 0) return;
