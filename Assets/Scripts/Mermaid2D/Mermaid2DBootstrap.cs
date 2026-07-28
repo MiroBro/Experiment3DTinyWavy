@@ -261,6 +261,12 @@ public class Mermaid2DBootstrap : MonoBehaviour
     [Tooltip("Include the head as an avoidance circle. OFF lets strands emerge from inside the skull.")]
     public bool hairAvoidsHead = false;
 
+    [Header("Hair Style Presets (rebuilds hair on change)")]
+    [Tooltip("Custom = the serialized Hair fields above (your tuned look — the default; presets never overwrite those values). Presets swap the hair's SHAPE — strand count/bones/length/spread/direction/width and a per-strand fade profile (FadeLongTop = shaved sides and nape, long swept-up top that does all the waving). Cycle in play with the on-screen button.")]
+    public HairStyle hairStyle = HairStyle.Custom;
+    [Tooltip("Show an on-screen button in play mode that cycles the hair styles.")]
+    public bool hairStyleButton = true;
+
     [Header("Body Shape")]
     [Tooltip("Torso half-width: thin neck → shoulders → bust → pinched waist → hips.")]
     public AnimationCurve torsoWidthCurve = new AnimationCurve(
@@ -483,6 +489,51 @@ public class Mermaid2DBootstrap : MonoBehaviour
 
     public enum SceneMood { Day, Night, KelpForest, BubblyBright, Custom }
 
+    public enum HairStyle { Custom, FlowingClassic, ShortBob, PixieCrop, FadeLongTop }
+
+    // Resolved hair-shape parameters: Custom reads the serialized fields; presets are
+    // self-contained so they never overwrite the user's tuned values.
+    struct HairParams
+    {
+        public int count, bones;
+        public float length, variance, spread, scalpRadius, widthScale;
+        public Vector2 baseDir;
+    }
+
+    HairParams ResolveHair()
+    {
+        switch (hairStyle)
+        {
+            case HairStyle.FlowingClassic:
+                return new HairParams { count = 26, bones = 34, length = 2.55f, variance = 0.221f, spread = 13.1f, scalpRadius = 0f, widthScale = 0.55f, baseDir = new Vector2(-1f, 0.22f) };
+            case HairStyle.ShortBob:
+                return new HairParams { count = 30, bones = 14, length = 0.95f, variance = 0.10f, spread = 30f, scalpRadius = 0.06f, widthScale = 0.68f, baseDir = new Vector2(-1f, 0.0f) };
+            case HairStyle.PixieCrop:
+                return new HairParams { count = 34, bones = 9, length = 0.5f, variance = 0.18f, spread = 42f, scalpRadius = 0.08f, widthScale = 0.72f, baseDir = new Vector2(-0.85f, 0.5f) };
+            case HairStyle.FadeLongTop:
+                return new HairParams { count = 26, bones = 26, length = 2.0f, variance = 0.12f, spread = 34f, scalpRadius = 0.05f, widthScale = 0.62f, baseDir = new Vector2(-0.8f, 0.62f) };
+            default:
+                return new HairParams { count = hairStrandCount, bones = hairBonesPerStrand, length = hairStrandLength, variance = hairLengthVariance, spread = hairSpreadAngle, scalpRadius = hairScalpRadius, widthScale = hairWidthScale, baseDir = hairBaseDirection };
+        }
+    }
+
+    // Per-strand length across the fan (t: 0 = topmost strand, 1 = lowest at the nape).
+    // This is what carves a CUT out of the uniform mane: FadeLongTop keeps the top strands
+    // full length (they do all the waving) and shaves everything below to stubble.
+    static float HairFanLength(HairStyle style, float t)
+    {
+        switch (style)
+        {
+            case HairStyle.FadeLongTop:
+                return Mathf.Lerp(1f, 0.10f, Mathf.SmoothStep(0f, 1f, Mathf.InverseLerp(0.25f, 0.70f, t)));
+            case HairStyle.ShortBob:
+                // Slightly longer toward the nape — the classic rounded bob line.
+                return Mathf.Lerp(0.85f, 1.05f, t);
+            default:
+                return 1f;
+        }
+    }
+
     // Scene-mood runtime state: current (blended) colors + the camera-parented overlay quad.
     [System.NonSerialized] Color _moodTintCur = Color.white;
     [System.NonSerialized] Color _moodGlowCur = Color.black;
@@ -598,6 +649,7 @@ public class Mermaid2DBootstrap : MonoBehaviour
     float _lastHairLengthVariance = float.NaN;
     Vector2 _lastHairBaseDirection = new Vector2(float.NaN, 0f);
     float _lastHairScalpRadius = float.NaN;
+    HairStyle _lastHairStyle;
     bool _lastHairAvoidsHead;
 
     // ---------------------------------------------------------------- sorting layers
@@ -1689,6 +1741,22 @@ public class Mermaid2DBootstrap : MonoBehaviour
     {
         if (!Application.isPlaying) return;
 
+        // Hair style cycler, topmost of the stacked buttons. Custom (the tuned serialized
+        // look) is part of the cycle so you can always come back to it.
+        if (hairStyleButton)
+        {
+            string hairName = hairStyle == HairStyle.FlowingClassic ? "Flowing Classic"
+                : hairStyle == HairStyle.ShortBob ? "Short Bob"
+                : hairStyle == HairStyle.PixieCrop ? "Pixie Crop"
+                : hairStyle == HairStyle.FadeLongTop ? "Fade + Long Top" : "Custom";
+            var hrect = new Rect(12f, Screen.height - 122f, 250f, 34f);
+            if (GUI.Button(hrect, $"Hair: {hairName}  ▶"))
+            {
+                int hcount = System.Enum.GetValues(typeof(HairStyle)).Length;
+                hairStyle = (HairStyle)(((int)hairStyle + 1) % hcount);
+            }
+        }
+
         // Mood cycler, stacked above the fluke button. Cycles the four presets; a Custom
         // mood set in the inspector is left alone until the button wraps it back to Day.
         if (sceneMoodButton)
@@ -1858,42 +1926,46 @@ public class Mermaid2DBootstrap : MonoBehaviour
         var prevState = Random.state;
         Random.InitState(hairSeed);
 
-        Vector2 baseDir = hairBaseDirection.sqrMagnitude > 0.0001f
-            ? hairBaseDirection.normalized
+        // Style preset (Custom = the serialized fields, bit-identical to the old path).
+        HairParams hp = ResolveHair();
+
+        Vector2 baseDir = hp.baseDir.sqrMagnitude > 0.0001f
+            ? hp.baseDir.normalized
             : Vector2.left;
 
-        for (int s = 0; s < hairStrandCount; s++)
+        for (int s = 0; s < hp.count; s++)
         {
-            // Per-strand scalp anchor (spread within hairScalpRadius so wide scalps have no
+            // Per-strand scalp anchor (spread within the scalp radius so wide scalps have no
             // bald central point).
-            Vector2 disc = Random.insideUnitCircle * hairScalpRadius;
+            Vector2 disc = Random.insideUnitCircle * hp.scalpRadius;
             var strandScalpGO = new GameObject($"ScalpAnchor{s:D2}");
             strandScalpGO.transform.SetParent(headScalp, false);
             strandScalpGO.transform.localPosition = new Vector3(disc.x, disc.y, 0f);
             Transform strandScalp = strandScalpGO.transform;
             hairGameObjects.Add(strandScalpGO);
 
-            // Per-strand variance — fan angle and length.
-            float t = (hairStrandCount > 1) ? (float)s / (hairStrandCount - 1) : 0.5f;
-            float angDeg = Mathf.Lerp(-hairSpreadAngle, hairSpreadAngle, t) + Random.Range(-5f, 5f);
+            // Per-strand variance — fan angle and length. t runs 0 (topmost strand) → 1
+            // (nape); the style's fan-length profile carves the cut out of the mane.
+            float t = (hp.count > 1) ? (float)s / (hp.count - 1) : 0.5f;
+            float angDeg = Mathf.Lerp(-hp.spread, hp.spread, t) + Random.Range(-5f, 5f);
             float rad = angDeg * Mathf.Deg2Rad;
             float ca = Mathf.Cos(rad), sa = Mathf.Sin(rad);
             Vector2 strandDir = new Vector2(baseDir.x * ca - baseDir.y * sa, baseDir.x * sa + baseDir.y * ca);
 
-            float lenMul = 1f + Random.Range(-hairLengthVariance, hairLengthVariance);
-            float strandLen = hairStrandLength * Mathf.Max(0.05f, lenMul);
-            float segLen = strandLen / Mathf.Max(1, hairBonesPerStrand);
+            float lenMul = 1f + Random.Range(-hp.variance, hp.variance);
+            float strandLen = hp.length * HairFanLength(hairStyle, t) * Mathf.Max(0.05f, lenMul);
+            float segLen = strandLen / Mathf.Max(1, hp.bones);
 
-            int N = hairBonesPerStrand + 1;
+            int N = hp.bones + 1;
             var tubePoints = new Transform[N];
             tubePoints[0] = strandScalp;
 
             Transform prev = strandScalp;
             Vector3 prevWorldPos = strandScalp.position;
 
-            for (int i = 0; i < hairBonesPerStrand; i++)
+            for (int i = 0; i < hp.bones; i++)
             {
-                float tBone = (i + 1) / (float)hairBonesPerStrand;
+                float tBone = (i + 1) / (float)hp.bones;
                 float smoothTime = Mathf.Lerp(hairBaseSmoothTime, hairTipSmoothTime, tBone);
 
                 Vector3 step = (Vector3)(strandDir * segLen);
@@ -1927,7 +1999,7 @@ public class Mermaid2DBootstrap : MonoBehaviour
             }
             start.a = 1f; end.a = 1f;
 
-            var ribbon = MakeRibbon($"HairRibbon{s:D2}", tubePoints, hairWidthCurve, hairWidthScale,
+            var ribbon = MakeRibbon($"HairRibbon{s:D2}", tubePoints, hairWidthCurve, hp.widthScale,
                 44, start, end, order, _hairArt);
             hairRibbons.Add(ribbon);
             hairGameObjects.Add(ribbon.gameObject);
@@ -2288,6 +2360,7 @@ public class Mermaid2DBootstrap : MonoBehaviour
         _lastHairLengthVariance = hairLengthVariance;
         _lastHairBaseDirection = hairBaseDirection;
         _lastHairScalpRadius = hairScalpRadius;
+        _lastHairStyle = hairStyle;
     }
 
     bool TailShapeChanged()
@@ -2324,7 +2397,8 @@ public class Mermaid2DBootstrap : MonoBehaviour
             || hairSeed != _lastHairSeed
             || !Mathf.Approximately(hairLengthVariance, _lastHairLengthVariance)
             || (hairBaseDirection - _lastHairBaseDirection).sqrMagnitude > 0.0001f
-            || !Mathf.Approximately(hairScalpRadius, _lastHairScalpRadius);
+            || !Mathf.Approximately(hairScalpRadius, _lastHairScalpRadius)
+            || hairStyle != _lastHairStyle;
     }
 
     void Update()
@@ -2502,6 +2576,13 @@ public class Mermaid2DBootstrap : MonoBehaviour
                     mat.SetColor("_ToonShade", new Color(toonShade.r * k, toonShade.g * k, toonShade.b * k, toonShade.a));
                     mat.SetColor("_InkColor", toonInk);
                     mat.SetFloat("_InkWidth", fluke3DToonInkWidth);
+                    if (mat.HasProperty("_Iridescence"))
+                    {
+                        var fa2 = flap.asset;
+                        mat.SetFloat("_Iridescence", fa2 != null ? fa2.iridescence : 0f);
+                        mat.SetFloat("_IridescenceScale", fa2 != null ? fa2.iridescenceScale : 3f);
+                        mat.SetFloat("_Glitter", fa2 != null ? fa2.glitter : 0f);
+                    }
                 }
 
                 // True silhouette outline: the hulls follow the unified-outline settings so
@@ -2543,10 +2624,11 @@ public class Mermaid2DBootstrap : MonoBehaviour
             fluke3DLightRef.color = _moodFlukeCur;   // GoldScales-material users get lit by the mood
         }
 
-        // 4. Live-editable hair root position + hair widths.
+        // 4. Live-editable hair root position + hair widths (style-resolved).
         if (headScalp != null) headScalp.localPosition = (Vector3)hairRootOffset;
+        float hw = hairStyle == HairStyle.Custom ? hairWidthScale : ResolveHair().widthScale;
         for (int i = 0; i < hairRibbons.Count; i++)
-            if (hairRibbons[i] != null) hairRibbons[i].widthScale = hairWidthScale;
+            if (hairRibbons[i] != null) hairRibbons[i].widthScale = hw;
 
         // 5. Hair-body collider refresh.
         if (hairAvoidsHead != _lastHairAvoidsHead)

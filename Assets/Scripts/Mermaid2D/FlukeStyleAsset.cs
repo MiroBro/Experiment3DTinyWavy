@@ -67,6 +67,14 @@ public class FlukeStyleAsset : ScriptableObject
     [Tooltip("Cel shade-side color — the tint of the shadow band.")]
     public Color toonShade = new Color(0.6f, 0.6f, 0.65f);
 
+    [Header("Iridescence (live, per-design)")]
+    [Tooltip("Opal/holographic rainbow driven by view angle — the fin's own rippling rolls the colors. 0 = off.")]
+    [Range(0f, 1f)] public float iridescence = 0f;
+    [Tooltip("How many rainbow bands sweep across as the fin tilts through the light.")]
+    [Range(0.5f, 8f)] public float iridescenceScale = 3f;
+    [Tooltip("Holographic glitter: micro-specks that glint in and out as the fin flexes. 0 = off.")]
+    [Range(0f, 1f)] public float glitter = 0f;
+
     [Header("Motion (live, per-design)")]
     [Tooltip("Bone lag at the fin ROOT, seconds (× the bootstrap's global/fluke flow multipliers).")]
     [Range(0.01f, 1f)] public float baseLag = 0.1f;

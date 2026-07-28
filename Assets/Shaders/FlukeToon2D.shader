@@ -17,6 +17,9 @@ Shader "Mermaid/FlukeToon2D"
         _InkColor  ("Rim Ink", Color) = (0.05, 0.04, 0.06, 1)
         _InkWidth  ("Rim Ink Width", Range(0, 0.6)) = 0.28
         _LightDir  ("Stylized Light Dir", Vector) = (-0.35, 0.75, -0.55, 0)
+        _Iridescence ("Iridescence", Range(0, 1)) = 0
+        _IridescenceScale ("Iridescence Band Scale", Range(0.5, 8)) = 3
+        _Glitter   ("Glitter", Range(0, 1)) = 0
     }
     SubShader
     {
@@ -36,6 +39,7 @@ Shader "Mermaid/FlukeToon2D"
                 float4 _MainTex_ST;
                 float4 _ToonBase; float4 _ToonShade; float4 _InkColor; float4 _LightDir;
                 float _ShadeAt; float _ShadeSoft; float _RootDarken; float _InkWidth;
+                float _Iridescence; float _IridescenceScale; float _Glitter;
             CBUFFER_END
 
             TEXTURE2D(_MainTex);
@@ -74,9 +78,35 @@ Shader "Mermaid/FlukeToon2D"
                 // Darken toward the root (uv.y = 0) so the fin melts into the tail tip.
                 col *= lerp(1.0 - _RootDarken, 1.0, saturate(IN.uv.y));
 
+                float3 V = normalize(GetCameraPositionWS() - IN.posWS);
+
+                // Opal iridescence: the hue is driven by VIEW ANGLE (dot(N,V)), so every
+                // ripple and twist of the fin rolls fresh rainbow bands across the surface
+                // — the shimmer comes from the motion itself. Rainbow via a cosine palette,
+                // blended toward white for a pastel, mother-of-pearl read instead of neon.
+                if (_Iridescence > 0.001)
+                {
+                    float facing = dot(N, V);
+                    float hueT = facing * _IridescenceScale + IN.uv.y * 1.7 + _Time.y * 0.25;
+                    float3 rainbow = 0.5 + 0.5 * cos(6.2832 * (hueT + float3(0.0, 0.33, 0.67)));
+                    rainbow = lerp(float3(1, 1, 1), rainbow, 0.65);
+                    col = lerp(col, col * rainbow * 1.35 + rainbow * 0.18, _Iridescence);
+                }
+
+                // Holographic glitter: fixed micro-cells on the surface that each glint only
+                // at their own narrow view angle — as the fin flexes, specks pop in and out
+                // like real glitter catching light.
+                if (_Glitter > 0.001)
+                {
+                    float2 cell = floor(IN.uv * float2(90.0, 240.0));
+                    float h = frac(sin(dot(cell, float2(12.9898, 78.233))) * 43758.5453);
+                    float wave = sin(h * 6.2832 + dot(N, V) * 12.0 + _Time.y * 2.0) * 0.5 + 0.5;
+                    float glint = smoothstep(0.985, 1.0, wave);
+                    col += _Glitter * glint * 0.9;
+                }
+
                 // Rim ink: where the surface turns edge-on to the camera, snap to the ink
                 // color — a drawn contour that matches the BlackClones outline language.
-                float3 V = normalize(GetCameraPositionWS() - IN.posWS);
                 float fres = 1.0 - abs(dot(N, V));
                 float ink = smoothstep(1.0 - _InkWidth, 1.0 - _InkWidth + 0.08, fres);
                 col = lerp(col, _InkColor.rgb, ink);
