@@ -18,6 +18,7 @@ public enum Fluke3DStyle
     BettaSplit,     // TWO flaps per lobe like a split betta tail, sparkly violet
     GoldfishFan,    // broad scalloped fan, fish-scale pattern
     SilkStreamers,  // THREE floppy ribbon streamers per lobe, iridescent silk
+    RosePetal,      // full rounded petal with a soft wavy edge, rose → cream-gold
 }
 
 public static class FlukeStyles
@@ -59,6 +60,7 @@ public static class FlukeStyles
         new FlapDef(3f, 1.05f, 1f, 1.9f, 5),
         new FlapDef(18f, 0.80f, 1f, 2.1f, 5),
     };
+    static readonly FlapDef[] RosePetalFlaps = { new FlapDef(0f, 0.95f, 1.2f, 1.1f, 6) };
 
     public static FlapDef[] GetFlaps(Fluke3DStyle style)
     {
@@ -69,6 +71,7 @@ public static class FlukeStyles
             case Fluke3DStyle.BettaSplit: return BettaFlaps;
             case Fluke3DStyle.GoldfishFan: return FanFlaps;
             case Fluke3DStyle.SilkStreamers: return StreamerFlaps;
+            case Fluke3DStyle.RosePetal: return RosePetalFlaps;
             default: return ClassicFlaps;
         }
     }
@@ -82,7 +85,7 @@ public static class FlukeStyles
             case Fluke3DStyle.Classic: return 1;
             case Fluke3DStyle.CoralJag: return 6;
             case Fluke3DStyle.GoldfishFan: return 5;
-            default: return 4;
+            default: return 4;   // smooth shapes (incl. RosePetal) are fine at 4
         }
     }
 
@@ -128,6 +131,12 @@ public static class FlukeStyles
                 float w = 0.075f * Mathf.Pow(Leaf(0.6f), 0.55f);
                 return Mathf.Max(0.004f, w);
             }
+            case 6: // rose petal: round and full, with a soft wavy edge
+            {
+                float body = 0.19f * Mathf.Pow(Leaf(0.5f), 0.4f);
+                float wave = 0.06f * Mathf.Sin(t * 3f * 2f * Mathf.PI);
+                return Mathf.Max(0.004f, body * (1f - Mathf.Max(0f, wave)));
+            }
             default:
                 return 0.15f;
         }
@@ -142,6 +151,7 @@ public static class FlukeStyles
             case Fluke3DStyle.BettaSplit: return "Betta Split";
             case Fluke3DStyle.GoldfishFan: return "Goldfish Fan";
             case Fluke3DStyle.SilkStreamers: return "Silk Streamers";
+            case Fluke3DStyle.RosePetal: return "Rose Petal";
             default: return "Classic Gold";
         }
     }
@@ -157,6 +167,7 @@ public static class FlukeStyles
             case Fluke3DStyle.BettaSplit: return new Color(1f, 0.96f, 1f);
             case Fluke3DStyle.GoldfishFan: return new Color(1f, 1f, 0.96f);
             case Fluke3DStyle.SilkStreamers: return new Color(1f, 1f, 1f);
+            case Fluke3DStyle.RosePetal: return new Color(1f, 0.97f, 0.97f);
             default: return Color.white;   // Classic uses the serialized field instead
         }
     }
@@ -170,6 +181,7 @@ public static class FlukeStyles
             case Fluke3DStyle.BettaSplit: return new Color(0.55f, 0.44f, 0.70f);
             case Fluke3DStyle.GoldfishFan: return new Color(0.72f, 0.52f, 0.40f);
             case Fluke3DStyle.SilkStreamers: return new Color(0.62f, 0.60f, 0.74f);
+            case Fluke3DStyle.RosePetal: return new Color(0.78f, 0.50f, 0.58f);
             default: return Color.white;
         }
     }
@@ -201,6 +213,7 @@ public static class FlukeStyles
             case Fluke3DStyle.BettaSplit: FillSparkle(px); break;
             case Fluke3DStyle.GoldfishFan: FillScales(px); break;
             case Fluke3DStyle.SilkStreamers: FillIridescent(px); break;
+            case Fluke3DStyle.RosePetal: FillRosePetal(px); break;
         }
         tex.SetPixels(px);
         tex.Apply(false, true);
@@ -325,6 +338,23 @@ public static class FlukeStyles
                     }
                 }
                 px[y * TexSize + x] = col;
+            }
+        }
+    }
+
+    static void FillRosePetal(Color[] px)
+    {
+        // Rose melting to cream-gold toward the tip — the walkthrough example style.
+        Color root = new Color(0.95f, 0.55f, 0.65f);
+        Color tip = new Color(1.00f, 0.90f, 0.75f);
+        for (int y = 0; y < TexSize; y++)
+        {
+            float v = y / (float)(TexSize - 1);   // 0 = fin ROOT, 1 = fin TIP
+            Color band = Color.Lerp(root, tip, v);
+            for (int x = 0; x < TexSize; x++)
+            {
+                float n = (Hash(x, y) - 0.5f) * 0.04f;   // whisper of petal grain
+                px[y * TexSize + x] = new Color(band.r + n, band.g + n, band.b + n, 1f);
             }
         }
     }
