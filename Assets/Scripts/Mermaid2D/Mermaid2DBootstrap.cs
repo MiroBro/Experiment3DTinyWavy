@@ -468,10 +468,13 @@ public class Mermaid2DBootstrap : MonoBehaviour
     public int capFrameRate = 0;
 
     [Header("Anchors (populated at runtime)")]
-    public Transform root;
-    public Transform driver;
-    public Transform headScalp;
-    public Transform hipPoint;
+    // Pure runtime state — MUST stay non-serialized: these once captured a preview mermaid
+    // into the saved scene (the "removed stale saved mermaid" warning), pinning 3000+ junk
+    // objects in the file because the references kept them alive.
+    [System.NonSerialized] public Transform root;
+    [System.NonSerialized] public Transform driver;
+    [System.NonSerialized] public Transform headScalp;
+    [System.NonSerialized] public Transform hipPoint;
 
     // ---------------------------------------------------------------- runtime state
 
