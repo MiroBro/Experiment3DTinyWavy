@@ -8,6 +8,7 @@ Shader "Mermaid/FlukeToon2D"
     // MeshRenderer's sortingOrder interleaves it with the sprite sort.
     Properties
     {
+        _MainTex   ("Pattern (RGB, optional)", 2D) = "white" {}
         _ToonBase  ("Lit Color", Color) = (1.0, 0.75, 0.28, 1)
         _ToonShade ("Shade Color", Color) = (0.62, 0.40, 0.10, 1)
         _ShadeAt   ("Band Threshold", Range(0.1, 0.9)) = 0.5
@@ -32,9 +33,13 @@ Shader "Mermaid/FlukeToon2D"
             #include "Packages/com.unity.render-pipelines.universal/ShaderLibrary/Core.hlsl"
 
             CBUFFER_START(UnityPerMaterial)
+                float4 _MainTex_ST;
                 float4 _ToonBase; float4 _ToonShade; float4 _InkColor; float4 _LightDir;
                 float _ShadeAt; float _ShadeSoft; float _RootDarken; float _InkWidth;
             CBUFFER_END
+
+            TEXTURE2D(_MainTex);
+            SAMPLER(sampler_MainTex);
 
             struct Attributes { float3 positionOS:POSITION; float3 normalOS:NORMAL; float2 uv:TEXCOORD0; };
             struct Varyings   { float4 positionHCS:SV_POSITION; float3 normalWS:TEXCOORD0; float2 uv:TEXCOORD1; float3 posWS:TEXCOORD2; };
@@ -46,7 +51,7 @@ Shader "Mermaid/FlukeToon2D"
                 OUT.posWS = w;
                 OUT.positionHCS = TransformWorldToHClip(w);
                 OUT.normalWS = TransformObjectToWorldNormal(IN.normalOS);
-                OUT.uv = IN.uv;
+                OUT.uv = IN.uv;   // raw tube UV — _MainTex_ST applied at sample time
                 return OUT;
             }
 
@@ -59,6 +64,12 @@ Shader "Mermaid/FlukeToon2D"
                 float ndl = dot(N, L) * 0.5 + 0.5;
                 float band = smoothstep(_ShadeAt - _ShadeSoft, _ShadeAt + _ShadeSoft, ndl);
                 float3 col = lerp(_ToonShade.rgb, _ToonBase.rgb, band);
+
+                // Optional pattern texture (fluke style designs). Defaults to white = no-op.
+                // ST applied here, not in vert, so uv.y stays raw for the root darken below
+                // (negative tiling x mirrors the pattern on the near lobe).
+                float2 patUV = IN.uv * _MainTex_ST.xy + _MainTex_ST.zw;
+                col *= SAMPLE_TEXTURE2D(_MainTex, sampler_MainTex, patUV).rgb;
 
                 // Darken toward the root (uv.y = 0) so the fin melts into the tail tip.
                 col *= lerp(1.0 - _RootDarken, 1.0, saturate(IN.uv.y));

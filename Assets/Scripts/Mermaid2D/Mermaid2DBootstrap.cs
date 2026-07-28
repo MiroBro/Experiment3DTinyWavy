@@ -194,6 +194,12 @@ public class Mermaid2DBootstrap : MonoBehaviour
     [Tooltip("EXTRA outline drawn only around the lobe CLOSEST to the camera, layered between the two lobes — it cuts the near lobe out from the one behind for a strong depth separation. World units; keep thinner than outlineWidth. Uses outlineColor. 0 = off. Live.")]
     [Range(0f, 0.2f)] public float fluke3DNearOutlineWidth = 0.03f;
 
+    [Header("Fluke Design (shape + pattern presets; rebuilds on change)")]
+    [Tooltip("Fluke DESIGN preset: silhouette (per-lobe flap layout — split betta tails and streamers get several independent bone chains per lobe), edge shape (jagged / scalloped / pointed), pattern texture (stripes, sparkles, scales...) and palette, all from FlukeStyles. Classic = the original hand-tuned leaf using the serialized width curve and toon colors. The near lobe mirrors the far lobe's pattern. Physics knobs above (lag, ripple, bend limits) apply to every design.")]
+    public Fluke3DStyle fluke3DStyle = Fluke3DStyle.Classic;
+    [Tooltip("Show an on-screen button in play mode that cycles through the fluke designs.")]
+    public bool fluke3DStyleButton = true;
+
     [Header("Hair (live-editable; some fields rebuild the hair on change)")]
     [Range(1, 80)] public int hairStrandCount = 26;
     [Range(3, 48)] public int hairBonesPerStrand = 34;
@@ -476,13 +482,23 @@ public class Mermaid2DBootstrap : MonoBehaviour
     readonly HashSet<Mermaid2DBone> flukeBoneSet = new HashSet<Mermaid2DBone>();
     readonly Ribbon2D[] flukeRibbons = new Ribbon2D[2];   // [0]=Up lobe, [1]=Down lobe — twist tunes live
     // True-3D fluke runtime state (flukeTrue3D mode): real MermaidBone chains + tube lobes.
+    // A "flap" is one bone chain + one tube; the classic design has one flap per lobe, but
+    // styles like BettaSplit / SilkStreamers mount several independently lagging flaps.
+    class Fluke3DFlap
+    {
+        public TubeRenderer tube;
+        public int lobe;             // 0 = far (+Z), 1 = near (−Z)
+        public int profile;          // FlukeStyles.Profile id (0 = serialized flukeWidthCurve)
+        public float widthScale;     // flap width × style multiplier
+        public Material mat;         // per-flap toon instance (null when custom override / non-toon)
+        public MeshRenderer hull;    // inverted-hull outline twin
+        public MeshFilter hullMf;
+    }
+    readonly List<Fluke3DFlap> fluke3DFlaps = new List<Fluke3DFlap>();
     readonly List<MermaidBone> fluke3DBones = new List<MermaidBone>();
-    readonly List<float> fluke3DBoneT = new List<float>();   // 0 at lobe root → 1 at tip; lag re-derived live
-    readonly TubeRenderer[] fluke3DTubes = new TubeRenderer[2];
+    readonly List<float> fluke3DBoneT = new List<float>();     // 0 at flap root → 1 at tip; lag re-derived live
+    readonly List<float> fluke3DBoneLag = new List<float>();   // per-bone flap lag multiplier (floppy streamers)
     Light fluke3DLightRef;
-    readonly Material[] fluke3DMatRefs = new Material[2];   // per-lobe toon instances, for live color pushes
-    readonly MeshRenderer[] fluke3DHulls = new MeshRenderer[2];   // inverted-hull outline twins
-    readonly MeshFilter[] fluke3DHullMfs = new MeshFilter[2];
     Material fluke3DHullMat;
     MeshRenderer fluke3DSepHull;   // thinner hull around the NEAR lobe, layered between the lobes
     MeshFilter fluke3DSepHullMf;
@@ -529,6 +545,7 @@ public class Mermaid2DBootstrap : MonoBehaviour
     float _lastFluke3DRoll = float.NaN;
     float _lastFluke3DLength = float.NaN;
     float _lastFluke3DSpread = float.NaN;
+    Fluke3DStyle _lastFluke3DStyle;
     int _lastHairStrandCount = -1;
     int _lastHairBonesPerStrand = -1;
     float _lastHairStrandLength = float.NaN;
@@ -602,11 +619,9 @@ public class Mermaid2DBootstrap : MonoBehaviour
         flukeRibbons[0] = flukeRibbons[1] = null;
         fluke3DBones.Clear();
         fluke3DBoneT.Clear();
-        fluke3DTubes[0] = fluke3DTubes[1] = null;
+        fluke3DBoneLag.Clear();
+        fluke3DFlaps.Clear();
         fluke3DLightRef = null;
-        fluke3DMatRefs[0] = fluke3DMatRefs[1] = null;
-        fluke3DHulls[0] = fluke3DHulls[1] = null;
-        fluke3DHullMfs[0] = fluke3DHullMfs[1] = null;
         fluke3DHullMat = null;
         fluke3DSepHull = null;
         fluke3DSepHullMf = null;
@@ -1221,110 +1236,135 @@ public class Mermaid2DBootstrap : MonoBehaviour
                         * Quaternion.AngleAxis(fluke3DRollDeg, Vector3.right);
         Vector3 finNormal = look * Vector3.up;
 
+        // The active design: flap layout + silhouette profiles + pattern (FlukeStyles).
+        // Classic = one flap per lobe with the serialized width curve — the original fin.
+        var defs = FlukeStyles.GetFlaps(fluke3DStyle);
+        int sub = FlukeStyles.Subdivisions(fluke3DStyle);
+        Texture2D pattern = FlukeStyles.GetTexture(fluke3DStyle);
+
         for (int s = 0; s < 2; s++)
         {
             int side = (s == 0) ? 1 : -1;                 // +Z lobe (far), then −Z lobe (near)
             string suffix = side > 0 ? "Far" : "Near";
-            Vector3 delta = look * new Vector3(-sweepDelta, 0f, side * spanDelta);
 
-            var tubePoints = new Transform[n + 1];
-            tubePoints[0] = tailTip;
-            Transform prev = tailTip;
-            Vector3 prevWorldPos = tailTip.position;
-
-            for (int i = 0; i < n; i++)
+            for (int f = 0; f < defs.Length; f++)
             {
-                float tBone = (i + 1) / (float)n;
-                Vector3 boneRestPos = prevWorldPos + delta;
+                var def = defs[f];
+                // Splay the flap within the fin plane; × side mirrors the layout between
+                // lobes, so the near lobe is the mirrored twin of the far one.
+                Quaternion flapRot = Quaternion.AngleAxis(def.angleDeg * side, finNormal);
+                Vector3 delta = flapRot * (look * new Vector3(
+                    -sweepDelta * def.lengthScale, 0f, side * spanDelta * def.lengthScale));
 
-                var go = new GameObject($"Fluke3D{suffix}{i:D2}");
-                go.transform.SetParent(root, false);
-                go.transform.position = boneRestPos;
-                var bone = go.AddComponent<MermaidBone>();
-                bone.anchor = prev;
-                // Lag profile is re-derived from fluke3DBaseLag/TipLag every ApplyLiveTick
-                // (waviness tunes live) — this is just the initial value.
-                bone.smoothTime = Mathf.Lerp(fluke3DBaseLag, fluke3DTipLag, tBone);
-                bone.maxBendAngleDeg = flukeMaxBendDeg;
-                // Rest offset in the anchor's REST frame (identity rotation at build) — the
-                // fin then swings with the tail tip's live rotation, lagging bone to bone.
-                bone.InitializeWithExplicitOffset(delta, Quaternion.identity);
-                fluke3DBones.Add(bone);
-                fluke3DBoneT.Add(tBone);
-                tailGameObjects.Add(go);
+                var tubePoints = new Transform[n + 1];
+                tubePoints[0] = tailTip;
+                Transform prev = tailTip;
+                Vector3 prevWorldPos = tailTip.position;
 
-                tubePoints[i + 1] = go.transform;
-                prev = go.transform;
-                prevWorldPos = boneRestPos;
-            }
+                for (int i = 0; i < n; i++)
+                {
+                    float tBone = (i + 1) / (float)n;
+                    Vector3 boneRestPos = prevWorldPos + delta;
 
-            var tgo = new GameObject($"FlukeTube3D{suffix}");
-            tgo.transform.SetParent(root, false);
-            tgo.AddComponent<MeshFilter>();
-            var mr = tgo.AddComponent<MeshRenderer>();
-            mr.sharedMaterial = Fluke3DMaterial(s);   // per-lobe instance (far lobe darkens)
-            mr.shadowCastingMode = UnityEngine.Rendering.ShadowCastingMode.Off;
-            mr.receiveShadows = false;
-            // Transparent-queue shader + sortingOrder slots the tubes into the sprite sort.
-            // Explicit per-lobe orders leave a slot between them for the separation stroke:
-            // far lobe −2, separation hull −1, near lobe 0 (all under the tail at 1).
-            mr.sortingOrder = s == 0 ? OrderFluke - 2 : OrderFluke;
-            var tube = tgo.AddComponent<TubeRenderer>();
-            tube.points = tubePoints;
-            tube.radii = new float[tubePoints.Length];
-            tube.sides = fluke3DTubeSides;
-            tube.aspectRatio = fluke3DAspect;
-            // Keep each ring's WIDE axis in the rolled/yawed fin plane, perpendicular to the
-            // lobe. (WorldUpAligned — the 3D scene's choice — assumes a horizontal fin and
-            // would fight the roll.)
-            tube.frameMode = TubeRenderer.FrameMode.FixedReference;
-            Vector3 lobeDir = look * new Vector3(-fluke3DLength, 0f, side * fluke3DSpread);
-            tube.referenceAxis = Vector3.Cross(finNormal, lobeDir).normalized;
-            tube.capEnds = true;
-            fluke3DTubes[s] = tube;
-            tailGameObjects.Add(tgo);
+                    var go = new GameObject($"Fluke3D{suffix}F{f}_{i:D2}");
+                    go.transform.SetParent(root, false);
+                    go.transform.position = boneRestPos;
+                    var bone = go.AddComponent<MermaidBone>();
+                    bone.anchor = prev;
+                    // Lag profile is re-derived from fluke3DBaseLag/TipLag every ApplyLiveTick
+                    // (waviness tunes live) — this is just the initial value.
+                    bone.smoothTime = Mathf.Lerp(fluke3DBaseLag, fluke3DTipLag, tBone) * def.lagScale;
+                    bone.maxBendAngleDeg = flukeMaxBendDeg;
+                    // Rest offset in the anchor's REST frame (identity rotation at build) — the
+                    // fin then swings with the tail tip's live rotation, lagging bone to bone.
+                    bone.InitializeWithExplicitOffset(delta, Quaternion.identity);
+                    fluke3DBones.Add(bone);
+                    fluke3DBoneT.Add(tBone);
+                    fluke3DBoneLag.Add(def.lagScale);
+                    tailGameObjects.Add(go);
 
-            // Inverted-hull outline twin: shares the tube's LIVE mesh (deforms for free),
-            // pushed outward along the 3D normals by the unified outline width and drawn at
-            // the outline depth — a full-thickness stroke even when the fin is edge-on,
-            // which is exactly where a scaled 2D clone would collapse.
-            if (fluke3DHullMat == null)
-            {
-                var hsh = Shader.Find("Mermaid/FlukeOutlineHull2D");
-                fluke3DHullMat = hsh != null
-                    ? new Material(hsh) { renderQueue = 3000 }
-                    : SpriteMat(outlineColor);
-            }
-            var hgo = new GameObject("OutlineHull");
-            hgo.transform.SetParent(tgo.transform, false);
-            var hmf = hgo.AddComponent<MeshFilter>();
-            hmf.sharedMesh = tgo.GetComponent<MeshFilter>().sharedMesh;
-            var hmr = hgo.AddComponent<MeshRenderer>();
-            hmr.sharedMaterial = fluke3DHullMat;
-            hmr.sortingOrder = OrderOutline;
-            hmr.shadowCastingMode = UnityEngine.Rendering.ShadowCastingMode.Off;
-            hmr.receiveShadows = false;
-            fluke3DHulls[s] = hmr;
-            fluke3DHullMfs[s] = hmf;
+                    tubePoints[i + 1] = go.transform;
+                    prev = go.transform;
+                    prevWorldPos = boneRestPos;
+                }
 
-            // NEAR lobe only: a second, thinner hull layered BETWEEN the lobes — it draws
-            // over the far lobe but under the near one, cutting the near fluke out from
-            // the fluke behind it (line-weight depth separation).
-            if (s == 1)
-            {
-                var ssh = Shader.Find("Mermaid/FlukeOutlineHull2D");
-                fluke3DSepMat = ssh != null
-                    ? new Material(ssh) { renderQueue = 3000 }
-                    : SpriteMat(outlineColor);
-                var sgo = new GameObject("SeparationHull");
-                sgo.transform.SetParent(tgo.transform, false);
-                fluke3DSepHullMf = sgo.AddComponent<MeshFilter>();
-                fluke3DSepHullMf.sharedMesh = tgo.GetComponent<MeshFilter>().sharedMesh;
-                fluke3DSepHull = sgo.AddComponent<MeshRenderer>();
-                fluke3DSepHull.sharedMaterial = fluke3DSepMat;
-                fluke3DSepHull.sortingOrder = OrderFluke - 1;
-                fluke3DSepHull.shadowCastingMode = UnityEngine.Rendering.ShadowCastingMode.Off;
-                fluke3DSepHull.receiveShadows = false;
+                var tgo = new GameObject($"FlukeTube3D{suffix}F{f}");
+                tgo.transform.SetParent(root, false);
+                tgo.AddComponent<MeshFilter>();
+                var mr = tgo.AddComponent<MeshRenderer>();
+                var flap = new Fluke3DFlap { lobe = s, profile = def.profile, widthScale = def.widthScale };
+                mr.sharedMaterial = Fluke3DFlapMaterial(flap, pattern, s);
+                mr.shadowCastingMode = UnityEngine.Rendering.ShadowCastingMode.Off;
+                mr.receiveShadows = false;
+                // Transparent-queue shader + sortingOrder slots the tubes into the sprite sort.
+                // Explicit per-lobe orders leave a slot between them for the separation stroke:
+                // far lobe −2, separation hull −1, near lobe 0 (all under the tail at 1).
+                mr.sortingOrder = s == 0 ? OrderFluke - 2 : OrderFluke;
+                var tube = tgo.AddComponent<TubeRenderer>();
+                tube.points = tubePoints;
+                tube.radii = new float[tubePoints.Length];
+                // Styled silhouettes carry their edge detail in a dense profile + subdivided
+                // rings (bones stay at n — physics cost unchanged). Classic keeps the plain
+                // per-bone radii path: bit-identical to the original mesh.
+                tube.subdivisions = sub;
+                if (def.profile != 0) tube.radiusProfile = new float[64];
+                tube.sides = fluke3DTubeSides;
+                tube.aspectRatio = fluke3DAspect;
+                // Keep each ring's WIDE axis in the rolled/yawed fin plane, perpendicular to the
+                // lobe. (WorldUpAligned — the 3D scene's choice — assumes a horizontal fin and
+                // would fight the roll.)
+                tube.frameMode = TubeRenderer.FrameMode.FixedReference;
+                Vector3 lobeDir = flapRot * (look * new Vector3(
+                    -fluke3DLength * def.lengthScale, 0f, side * fluke3DSpread * def.lengthScale));
+                tube.referenceAxis = Vector3.Cross(finNormal, lobeDir).normalized;
+                tube.capEnds = true;
+                flap.tube = tube;
+                tailGameObjects.Add(tgo);
+
+                // Inverted-hull outline twin: shares the tube's LIVE mesh (deforms for free),
+                // pushed outward along the 3D normals by the unified outline width and drawn at
+                // the outline depth — a full-thickness stroke even when the fin is edge-on,
+                // which is exactly where a scaled 2D clone would collapse.
+                if (fluke3DHullMat == null)
+                {
+                    var hsh = Shader.Find("Mermaid/FlukeOutlineHull2D");
+                    fluke3DHullMat = hsh != null
+                        ? new Material(hsh) { renderQueue = 3000 }
+                        : SpriteMat(outlineColor);
+                }
+                var hgo = new GameObject("OutlineHull");
+                hgo.transform.SetParent(tgo.transform, false);
+                var hmf = hgo.AddComponent<MeshFilter>();
+                hmf.sharedMesh = tgo.GetComponent<MeshFilter>().sharedMesh;
+                var hmr = hgo.AddComponent<MeshRenderer>();
+                hmr.sharedMaterial = fluke3DHullMat;
+                hmr.sortingOrder = OrderOutline;
+                hmr.shadowCastingMode = UnityEngine.Rendering.ShadowCastingMode.Off;
+                hmr.receiveShadows = false;
+                flap.hull = hmr;
+                flap.hullMf = hmf;
+
+                // NEAR lobe, primary flap only: a second, thinner hull layered BETWEEN the
+                // lobes — it draws over the far lobe but under the near one, cutting the near
+                // fluke out from the fluke behind it (line-weight depth separation).
+                if (s == 1 && f == 0)
+                {
+                    var ssh = Shader.Find("Mermaid/FlukeOutlineHull2D");
+                    fluke3DSepMat = ssh != null
+                        ? new Material(ssh) { renderQueue = 3000 }
+                        : SpriteMat(outlineColor);
+                    var sgo = new GameObject("SeparationHull");
+                    sgo.transform.SetParent(tgo.transform, false);
+                    fluke3DSepHullMf = sgo.AddComponent<MeshFilter>();
+                    fluke3DSepHullMf.sharedMesh = tgo.GetComponent<MeshFilter>().sharedMesh;
+                    fluke3DSepHull = sgo.AddComponent<MeshRenderer>();
+                    fluke3DSepHull.sharedMaterial = fluke3DSepMat;
+                    fluke3DSepHull.sortingOrder = OrderFluke - 1;
+                    fluke3DSepHull.shadowCastingMode = UnityEngine.Rendering.ShadowCastingMode.Off;
+                    fluke3DSepHull.receiveShadows = false;
+                }
+
+                fluke3DFlaps.Add(flap);
             }
         }
         RefreshFluke3DTubes();
@@ -1342,35 +1382,61 @@ public class Mermaid2DBootstrap : MonoBehaviour
         tailGameObjects.Add(lgo);
     }
 
-    // Live-refresh of the 3D lobes' cross-section shape from the shared fluke width curve.
+    // Live-refresh of every flap's silhouette: Classic reads the serialized width curve
+    // into per-bone radii (original path); styled flaps sample their dense FlukeStyles
+    // profile — jagged/scalloped edges live in the 64-sample radiusProfile, rendered by
+    // the tube's subdivided rings.
     void RefreshFluke3DTubes()
     {
-        for (int s = 0; s < 2; s++)
+        for (int i = 0; i < fluke3DFlaps.Count; i++)
         {
-            var tube = fluke3DTubes[s];
-            if (tube == null || tube.radii == null) continue;
+            var flap = fluke3DFlaps[i];
+            var tube = flap.tube;
+            if (tube == null) continue;
             tube.sides = fluke3DTubeSides;
             tube.aspectRatio = fluke3DAspect;
-            var radii = tube.radii;
-            for (int i = 0; i < radii.Length; i++)
+            if (flap.profile == 0)
             {
-                float t = radii.Length > 1 ? i / (float)(radii.Length - 1) : 0f;
-                radii[i] = Mathf.Max(0.001f, flukeWidthCurve.Evaluate(t) * fluke3DWidthScale);
+                var radii = tube.radii;
+                if (radii == null) continue;
+                for (int j = 0; j < radii.Length; j++)
+                {
+                    float t = radii.Length > 1 ? j / (float)(radii.Length - 1) : 0f;
+                    radii[j] = Mathf.Max(0.001f, flukeWidthCurve.Evaluate(t) * fluke3DWidthScale);
+                }
+            }
+            else
+            {
+                var prof = tube.radiusProfile;
+                if (prof == null) continue;
+                for (int j = 0; j < prof.Length; j++)
+                {
+                    float t = prof.Length > 1 ? j / (float)(prof.Length - 1) : 0f;
+                    prof[j] = Mathf.Max(0.001f,
+                        FlukeStyles.Profile(flap.profile, t) * flap.widthScale * fluke3DWidthScale);
+                }
             }
         }
     }
 
-    Material Fluke3DMaterial(int lobe)
+    Material Fluke3DFlapMaterial(Fluke3DFlap flap, Texture2D pattern, int lobe)
     {
-        fluke3DMatRefs[lobe] = null;
+        flap.mat = null;
         if (fluke3DMaterial != null) return fluke3DMaterial;      // custom art: shared as-is
         var sh = Shader.Find("Mermaid/FlukeToon2D");              // flat cel = blends with 2D art
         if (sh == null) sh = Shader.Find("Mermaid/GoldScales2D"); // SampleScene look
         if (sh == null) sh = Shader.Find("Mermaid/GoldScales");   // opaque fallback
         if (sh != null)
         {
-            fluke3DMatRefs[lobe] = new Material(sh) { renderQueue = 3000 };   // sortingOrder applies
-            return fluke3DMatRefs[lobe];
+            var mat = new Material(sh) { renderQueue = 3000 };    // sortingOrder applies
+            if (pattern != null && mat.HasProperty("_MainTex"))
+            {
+                mat.SetTexture("_MainTex", pattern);
+                // The near lobe samples the pattern with U mirrored — the mirrored twin.
+                if (lobe == 1) mat.SetTextureScale("_MainTex", new Vector2(-1f, 1f));
+            }
+            flap.mat = mat;
+            return mat;
         }
         return SpriteMat(goldDeepColor);
     }
@@ -1387,6 +1453,20 @@ public class Mermaid2DBootstrap : MonoBehaviour
     {
         for (int i = 0; i < fluke3DBones.Count; i++)
             if (fluke3DBones[i] != null) fluke3DBones[i].Tick(dt);
+    }
+
+    // Play-mode fluke-design cycler (bottom-left; the treasure/sparkle IMGUI boxes own the
+    // top-left). Changing fluke3DStyle here is picked up by TailFlukeShapeChanged next
+    // Update, which rebuilds the fin — same path as editing the field in the inspector.
+    void OnGUI()
+    {
+        if (!Application.isPlaying || !fluke3DStyleButton || !flukeTrue3D) return;
+        var rect = new Rect(12f, Screen.height - 46f, 250f, 34f);
+        if (GUI.Button(rect, $"Fluke: {FlukeStyles.DisplayName(fluke3DStyle)}  ▶"))
+        {
+            int count = System.Enum.GetValues(typeof(Fluke3DStyle)).Length;
+            fluke3DStyle = (Fluke3DStyle)(((int)fluke3DStyle + 1) % count);
+        }
     }
 
     void BuildHead(Transform headBone)
@@ -1711,11 +1791,9 @@ public class Mermaid2DBootstrap : MonoBehaviour
         flukeRibbons[0] = flukeRibbons[1] = null;
         fluke3DBones.Clear();
         fluke3DBoneT.Clear();
-        fluke3DTubes[0] = fluke3DTubes[1] = null;
+        fluke3DBoneLag.Clear();
+        fluke3DFlaps.Clear();
         fluke3DLightRef = null;
-        fluke3DMatRefs[0] = fluke3DMatRefs[1] = null;
-        fluke3DHulls[0] = fluke3DHulls[1] = null;
-        fluke3DHullMfs[0] = fluke3DHullMfs[1] = null;
         fluke3DHullMat = null;
         fluke3DSepHull = null;
         fluke3DSepHullMf = null;
@@ -1887,6 +1965,7 @@ public class Mermaid2DBootstrap : MonoBehaviour
         _lastFluke3DRoll = fluke3DRollDeg;
         _lastFluke3DLength = fluke3DLength;
         _lastFluke3DSpread = fluke3DSpread;
+        _lastFluke3DStyle = fluke3DStyle;
         _lastHairStrandCount = hairStrandCount;
         _lastHairBonesPerStrand = hairBonesPerStrand;
         _lastHairStrandLength = hairStrandLength;
@@ -1908,7 +1987,8 @@ public class Mermaid2DBootstrap : MonoBehaviour
             || !Mathf.Approximately(fluke3DYawDeg, _lastFluke3DYaw)
             || !Mathf.Approximately(fluke3DRollDeg, _lastFluke3DRoll)
             || !Mathf.Approximately(fluke3DLength, _lastFluke3DLength)
-            || !Mathf.Approximately(fluke3DSpread, _lastFluke3DSpread);
+            || !Mathf.Approximately(fluke3DSpread, _lastFluke3DSpread)
+            || fluke3DStyle != _lastFluke3DStyle;
     }
 
     bool HairShapeChanged()
@@ -2029,48 +2109,57 @@ public class Mermaid2DBootstrap : MonoBehaviour
                 if (b == null) continue;
                 // Waviness lives here: the root→tip lag spread stretches the tail-beat wave
                 // out along each lobe, so raising fluke3DTipLag adds traveling waves live.
-                b.smoothTime = Mathf.Lerp(fluke3DBaseLag, fluke3DTipLag, fluke3DBoneT[i]) * f3m;
+                // fluke3DBoneLag carries the flap's style multiplier (streamers = floppier).
+                b.smoothTime = Mathf.Lerp(fluke3DBaseLag, fluke3DTipLag, fluke3DBoneT[i])
+                             * fluke3DBoneLag[i] * f3m;
                 b.maxBendAngleDeg = flukeMaxBendDeg;
             }
             RefreshFluke3DTubes();
 
-            // Skirt-hem flutter, offset between the lobes so they never flap in sync.
-            for (int s = 0; s < 2; s++)
-            {
-                var tube = fluke3DTubes[s];
-                if (tube == null) continue;
-                tube.rippleAmplitude = fluke3DRippleAmp;
-                tube.rippleCycles = fluke3DRippleCycles;
-                tube.rippleHz = fluke3DRippleHz;
-                tube.rippleEdgeBias = fluke3DRippleEdgeBias;
-                tube.rippleCurl = fluke3DRippleCurl;
-                tube.ripplePhaseDeg = s == 0 ? 0f : 137f;
-            }
-
-            // Toon look tuning (ink follows the unified outline color for a matched style).
-            // The FAR lobe (s == 0, +Z) darkens so the two lobes read as separate shapes.
-            for (int s = 0; s < 2; s++)
-            {
-                var mat = fluke3DMatRefs[s];
-                if (mat == null || !mat.HasProperty("_ToonBase")) continue;
-                float k = s == 0 ? 1f - Mathf.Clamp01(fluke3DFarLobeDarken) : 1f;
-                Color bc = fluke3DToonBase, sc = fluke3DToonShade;
-                mat.SetColor("_ToonBase", new Color(bc.r * k, bc.g * k, bc.b * k, bc.a));
-                mat.SetColor("_ToonShade", new Color(sc.r * k, sc.g * k, sc.b * k, sc.a));
-                mat.SetColor("_InkColor", fluke3DToonInkColor);
-                mat.SetFloat("_InkWidth", fluke3DToonInkWidth);
-            }
-
-            // True silhouette outline: the hulls follow the unified-outline settings so
-            // they union with the BlackClones stroke as one continuous ink line.
             bool hullOn = outlineMode == OutlineMode.BlackClones && outlineWidth > 0.0001f;
-            for (int s = 0; s < 2; s++)
+            // Classic keeps the serialized toon colors; styled designs bring their own
+            // palette (their pattern texture carries the hue, so bases stay near-white).
+            bool classicLook = fluke3DStyle == Fluke3DStyle.Classic;
+            Color toonBase = classicLook ? fluke3DToonBase : FlukeStyles.ToonBase(fluke3DStyle);
+            Color toonShade = classicLook ? fluke3DToonShade : FlukeStyles.ToonShade(fluke3DStyle);
+
+            for (int i = 0; i < fluke3DFlaps.Count; i++)
             {
-                if (fluke3DHulls[s] == null) continue;
-                fluke3DHulls[s].enabled = hullOn;
-                // Re-point at the tube's mesh in case it was recreated (editor domain reload).
-                if (fluke3DTubes[s] != null && fluke3DHullMfs[s] != null)
-                    fluke3DHullMfs[s].sharedMesh = fluke3DTubes[s].GetComponent<MeshFilter>().sharedMesh;
+                var flap = fluke3DFlaps[i];
+                var tube = flap.tube;
+
+                // Skirt-hem flutter, phase-offset per flap so nothing flaps in sync.
+                if (tube != null)
+                {
+                    tube.rippleAmplitude = fluke3DRippleAmp;
+                    tube.rippleCycles = fluke3DRippleCycles;
+                    tube.rippleHz = fluke3DRippleHz;
+                    tube.rippleEdgeBias = fluke3DRippleEdgeBias;
+                    tube.rippleCurl = fluke3DRippleCurl;
+                    tube.ripplePhaseDeg = i * 137f;
+                }
+
+                // Toon look tuning (ink follows the unified outline color for a matched
+                // style). FAR-lobe flaps darken so the two lobes read as separate shapes.
+                var mat = flap.mat;
+                if (mat != null && mat.HasProperty("_ToonBase"))
+                {
+                    float k = flap.lobe == 0 ? 1f - Mathf.Clamp01(fluke3DFarLobeDarken) : 1f;
+                    mat.SetColor("_ToonBase", new Color(toonBase.r * k, toonBase.g * k, toonBase.b * k, toonBase.a));
+                    mat.SetColor("_ToonShade", new Color(toonShade.r * k, toonShade.g * k, toonShade.b * k, toonShade.a));
+                    mat.SetColor("_InkColor", fluke3DToonInkColor);
+                    mat.SetFloat("_InkWidth", fluke3DToonInkWidth);
+                }
+
+                // True silhouette outline: the hulls follow the unified-outline settings so
+                // they union with the BlackClones stroke as one continuous ink line.
+                if (flap.hull != null)
+                {
+                    flap.hull.enabled = hullOn;
+                    // Re-point at the tube's mesh in case it was recreated (domain reload).
+                    if (tube != null && flap.hullMf != null)
+                        flap.hullMf.sharedMesh = tube.GetComponent<MeshFilter>().sharedMesh;
+                }
             }
             if (fluke3DHullMat != null && fluke3DHullMat.HasProperty("_Width"))
             {
@@ -2078,12 +2167,16 @@ public class Mermaid2DBootstrap : MonoBehaviour
                 fluke3DHullMat.SetFloat("_Width", outlineWidth);
             }
 
-            // Near-lobe separation stroke (independent of the unified outline toggle).
+            // Near-lobe separation stroke (independent of the unified outline toggle) —
+            // lives on the near lobe's PRIMARY flap.
             if (fluke3DSepHull != null)
             {
                 fluke3DSepHull.enabled = fluke3DNearOutlineWidth > 0.0001f;
-                if (fluke3DTubes[1] != null && fluke3DSepHullMf != null)
-                    fluke3DSepHullMf.sharedMesh = fluke3DTubes[1].GetComponent<MeshFilter>().sharedMesh;
+                TubeRenderer nearTube = null;
+                for (int i = 0; i < fluke3DFlaps.Count; i++)
+                    if (fluke3DFlaps[i].lobe == 1) { nearTube = fluke3DFlaps[i].tube; break; }
+                if (nearTube != null && fluke3DSepHullMf != null)
+                    fluke3DSepHullMf.sharedMesh = nearTube.GetComponent<MeshFilter>().sharedMesh;
             }
             if (fluke3DSepMat != null && fluke3DSepMat.HasProperty("_Width"))
             {

@@ -9,6 +9,11 @@ public class TubeRenderer : MonoBehaviour
     public Transform[] points;
     [Tooltip("Per-point radius. Length should match points; if shorter, last entry is reused.")]
     public float[] radii;
+    [Tooltip("Optional dense half-width profile sampled by normalized position along the tube (0 = first point, 1 = last point). When set (length >= 2) it OVERRIDES radii, letting the silhouette carry far more detail than one value per control point (jagged / scalloped edges) — pair with subdivisions so the mesh has rings to show it.")]
+    public float[] radiusProfile;
+    [Tooltip("Mesh rings per control-point segment. 1 = one ring per point (classic behavior). Higher values Catmull-Rom-interpolate the spine between control points and sample the radius per ring, so fine silhouette detail doesn't require more physics bones.")]
+    [Range(1, 8)]
+    public int subdivisions = 1;
     [Tooltip("Number of sides around the tube cross-section. Higher = smoother silhouette.")]
     [Range(3, 32)]
     public int sides = 16;
@@ -44,6 +49,8 @@ public class TubeRenderer : MonoBehaviour
     Vector2[] uvsBuf;
     int[] trisBuf;
     Vector3[] localPts;
+    Vector3[] ringPts;
+    float[] ringRad;
     Vector3[] tangents;
 
     void Awake()
@@ -70,12 +77,30 @@ public class TubeRenderer : MonoBehaviour
         Build();
     }
 
+    float RadiusAtPoint(int i)
+    {
+        return (radii != null && i < radii.Length)
+            ? radii[i]
+            : (radii != null && radii.Length > 0 ? radii[radii.Length - 1] : 0.1f);
+    }
+
+    static Vector3 CatmullRom(Vector3 p0, Vector3 p1, Vector3 p2, Vector3 p3, float t)
+    {
+        float t2 = t * t, t3 = t2 * t;
+        return 0.5f * ((2f * p1)
+            + (-p0 + p2) * t
+            + (2f * p0 - 5f * p1 + 4f * p2 - p3) * t2
+            + (-p0 + 3f * p1 - 3f * p2 + p3) * t3);
+    }
+
     void Build()
     {
         int N = points.Length;
+        int sub = Mathf.Max(1, subdivisions);
+        int R = (N - 1) * sub + 1;              // ring count (== N when sub == 1)
         int S = Mathf.Max(3, sides);
-        int totalVerts = N * S + (capEnds ? 2 : 0);
-        int totalTriIdx = ((N - 1) * S * 2 + (capEnds ? S * 2 : 0)) * 3;
+        int totalVerts = R * S + (capEnds ? 2 : 0);
+        int totalTriIdx = ((R - 1) * S * 2 + (capEnds ? S * 2 : 0)) * 3;
 
         if (vertsBuf == null || vertsBuf.Length != totalVerts)
         {
@@ -84,9 +109,12 @@ public class TubeRenderer : MonoBehaviour
             trisBuf = new int[totalTriIdx];
         }
         if (localPts == null || localPts.Length != N)
-        {
             localPts = new Vector3[N];
-            tangents = new Vector3[N];
+        if (ringPts == null || ringPts.Length != R)
+        {
+            ringPts = new Vector3[R];
+            ringRad = new float[R];
+            tangents = new Vector3[R];
         }
 
         // 1) Convert control points to this object's local frame.
@@ -96,26 +124,73 @@ public class TubeRenderer : MonoBehaviour
             else localPts[i] = transform.InverseTransformPoint(points[i].position);
         }
 
-        // 2) Tangents at each control point: midpoint direction for interior, edge direction at ends.
+        // 1b) Ring positions: the control points themselves, or a Catmull-Rom spline through
+        //     them when subdivided (fine silhouette detail without extra bones).
+        if (sub == 1)
+        {
+            for (int i = 0; i < N; i++) ringPts[i] = localPts[i];
+        }
+        else
+        {
+            int rIdx = 0;
+            for (int i = 0; i < N - 1; i++)
+            {
+                Vector3 p0 = localPts[Mathf.Max(i - 1, 0)];
+                Vector3 p1 = localPts[i];
+                Vector3 p2 = localPts[i + 1];
+                Vector3 p3 = localPts[Mathf.Min(i + 2, N - 1)];
+                for (int k = 0; k < sub; k++)
+                    ringPts[rIdx++] = CatmullRom(p0, p1, p2, p3, k / (float)sub);
+            }
+            ringPts[rIdx] = localPts[N - 1];
+        }
+
+        // 1c) Ring radii: dense profile when provided, else per-point radii (lerped between
+        //     control points for subdivided rings).
+        bool useProfile = radiusProfile != null && radiusProfile.Length >= 2;
+        for (int j = 0; j < R; j++)
+        {
+            float tj = (R > 1) ? j / (float)(R - 1) : 0f;
+            if (useProfile)
+            {
+                float x = tj * (radiusProfile.Length - 1);
+                int i0 = Mathf.Clamp(Mathf.FloorToInt(x), 0, radiusProfile.Length - 1);
+                int i1 = Mathf.Min(i0 + 1, radiusProfile.Length - 1);
+                ringRad[j] = Mathf.Lerp(radiusProfile[i0], radiusProfile[i1], x - i0);
+            }
+            else if (sub == 1)
+            {
+                ringRad[j] = RadiusAtPoint(j);
+            }
+            else
+            {
+                float x = tj * (N - 1);
+                int i0 = Mathf.Clamp(Mathf.FloorToInt(x), 0, N - 1);
+                int i1 = Mathf.Min(i0 + 1, N - 1);
+                ringRad[j] = Mathf.Lerp(RadiusAtPoint(i0), RadiusAtPoint(i1), x - i0);
+            }
+        }
+
+        // 2) Tangents at each ring: midpoint direction for interior, edge direction at ends.
         //    Defensive against degenerate (zero) tangents — fall back to the previous good one.
         Vector3 lastGoodTangent = Vector3.forward;
-        for (int i = 0; i < N; i++)
+        for (int i = 0; i < R; i++)
         {
             Vector3 t;
             if (i == 0)
             {
-                Vector3 d = localPts[1] - localPts[0];
+                Vector3 d = ringPts[1] - ringPts[0];
                 t = (d.sqrMagnitude > 0.000001f) ? d.normalized : lastGoodTangent;
             }
-            else if (i == N - 1)
+            else if (i == R - 1)
             {
-                Vector3 d = localPts[i] - localPts[i - 1];
+                Vector3 d = ringPts[i] - ringPts[i - 1];
                 t = (d.sqrMagnitude > 0.000001f) ? d.normalized : lastGoodTangent;
             }
             else
             {
-                Vector3 a = localPts[i] - localPts[i - 1];
-                Vector3 b = localPts[i + 1] - localPts[i];
+                Vector3 a = ringPts[i] - ringPts[i - 1];
+                Vector3 b = ringPts[i + 1] - ringPts[i];
                 Vector3 sum = a + b;
                 if (sum.sqrMagnitude > 0.000001f) t = sum.normalized;
                 else if (a.sqrMagnitude > 0.000001f) t = a.normalized;
@@ -161,18 +236,13 @@ public class TubeRenderer : MonoBehaviour
         {
             float clock = Application.isPlaying ? Time.time : Time.realtimeSinceStartup;
             ripplePhase = clock * rippleHz * 2f * Mathf.PI + ripplePhaseDeg * Mathf.Deg2Rad;
-            for (int i = 0; i < N; i++)
-            {
-                float rad = (radii != null && i < radii.Length)
-                    ? radii[i]
-                    : (radii != null && radii.Length > 0 ? radii[radii.Length - 1] : 0.1f);
-                rippleMaxRad = Mathf.Max(rippleMaxRad, rad);
-            }
+            for (int i = 0; i < R; i++)
+                rippleMaxRad = Mathf.Max(rippleMaxRad, ringRad[i]);
             if (rippleMaxRad < 1e-5f) rippling = false;
         }
 
         int v = 0;
-        for (int i = 0; i < N; i++)
+        for (int i = 0; i < R; i++)
         {
             Vector3 t = tangents[i];
 
@@ -206,13 +276,18 @@ public class TubeRenderer : MonoBehaviour
             r = r.normalized;
             u = Vector3.Cross(t, r).normalized;
 
-            float radius = (radii != null && i < radii.Length)
-                ? radii[i]
-                : (radii != null && radii.Length > 0 ? radii[radii.Length - 1] : 0.1f);
+            float radius = ringRad[i];
 
             float ar = aspectRatio;
             if (aspectRatios != null && aspectRatios.Length > 0)
-                ar = (i < aspectRatios.Length) ? aspectRatios[i] : aspectRatios[aspectRatios.Length - 1];
+            {
+                float x = ((R > 1) ? i / (float)(R - 1) : 0f) * (N - 1);
+                int i0 = Mathf.Clamp(Mathf.FloorToInt(x), 0, N - 1);
+                int i1 = Mathf.Min(i0 + 1, N - 1);
+                float a0 = (i0 < aspectRatios.Length) ? aspectRatios[i0] : aspectRatios[aspectRatios.Length - 1];
+                float a1 = (i1 < aspectRatios.Length) ? aspectRatios[i1] : aspectRatios[aspectRatios.Length - 1];
+                ar = Mathf.Lerp(a0, a1, x - i0);
+            }
 
             // Ripple wave for this ring: travels root → tip, faded to zero at the root so
             // the tube stays welded to its attachment, and scaled by the local radius so
@@ -220,7 +295,7 @@ public class TubeRenderer : MonoBehaviour
             float ringWave = 0f;
             if (rippling)
             {
-                float along = (N > 1) ? i / (float)(N - 1) : 0f;
+                float along = (R > 1) ? i / (float)(R - 1) : 0f;
                 ringWave = Mathf.Sin(along * rippleCycles * 2f * Mathf.PI - ripplePhase)
                          * rippleAmplitude * along * (radius / rippleMaxRad);
             }
@@ -230,7 +305,7 @@ public class TubeRenderer : MonoBehaviour
                 float angle = k * 2f * Mathf.PI / S;
                 float cosA = Mathf.Cos(angle);
                 Vector3 dir = cosA * r + Mathf.Sin(angle) * u * ar;
-                Vector3 vert = localPts[i] + dir * radius;
+                Vector3 vert = ringPts[i] + dir * radius;
                 if (rippling)
                 {
                     // Edge weight: 1 at the wide rim (cos ±1), 0 at the thin faces. Signed
@@ -249,14 +324,14 @@ public class TubeRenderer : MonoBehaviour
         if (capEnds)
         {
             startCapIdx = v;
-            vertsBuf[v++] = localPts[0];
+            vertsBuf[v++] = ringPts[0];
             endCapIdx = v;
-            vertsBuf[v++] = localPts[N - 1];
+            vertsBuf[v++] = ringPts[R - 1];
         }
 
         // 4) Triangles — body quads.
         int t_idx = 0;
-        for (int i = 0; i < N - 1; i++)
+        for (int i = 0; i < R - 1; i++)
         {
             int row0 = i * S;
             int row1 = (i + 1) * S;
@@ -283,8 +358,8 @@ public class TubeRenderer : MonoBehaviour
                 trisBuf[t_idx++] = kNext;
                 trisBuf[t_idx++] = k;
             }
-            // End cap (faces +tangent[N-1]).
-            int endRow = (N - 1) * S;
+            // End cap (faces +tangent[R-1]).
+            int endRow = (R - 1) * S;
             for (int k = 0; k < S; k++)
             {
                 int kNext = (k + 1) % S;
@@ -297,9 +372,9 @@ public class TubeRenderer : MonoBehaviour
         // Generate UVs: U around the ring [0..1), V along the tube length [0..1].
         // This lets shaders (e.g. Hair/Curly) reference position along and around the tube.
         int uvIdx = 0;
-        for (int i = 0; i < N; i++)
+        for (int i = 0; i < R; i++)
         {
-            float vCoord = (N > 1) ? (float)i / (N - 1) : 0f;
+            float vCoord = (R > 1) ? (float)i / (R - 1) : 0f;
             for (int k = 0; k < S; k++)
             {
                 float uCoord = (float)k / S;
