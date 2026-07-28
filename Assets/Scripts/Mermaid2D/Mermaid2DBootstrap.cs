@@ -194,6 +194,12 @@ public class Mermaid2DBootstrap : MonoBehaviour
     [Tooltip("EXTRA outline drawn only around the lobe CLOSEST to the camera, layered between the two lobes — it cuts the near lobe out from the one behind for a strong depth separation. World units; keep thinner than outlineWidth. Uses outlineColor. 0 = off. Live.")]
     [Range(0f, 0.2f)] public float fluke3DNearOutlineWidth = 0.03f;
 
+    [Header("Fluke Water Drag (the fin feels her apparent speed; live)")]
+    [Tooltip("How strongly her apparent speed over the ground STREAMS the flukes out behind her. The faster the world scrolls past, the less time the fin gets to settle into its bunched wave shapes: fluke bone lag is divided by (1 + this × speed), so at full cruise the waves flatten and trail instead of stacking up, and when she stops to rummage the fin relaxes back to its loose folds. 0 = old speed-blind behavior. Applies to the true-3D fin AND the 2D ribbon flukes.")]
+    [Range(0f, 3f)] public float flukeDragStretch = 0.9f;
+    [Tooltip("How much apparent speed TIGHTENS the flukes' bend limit — rushing water won't let the fin fold back on itself, so at speed it straightens and streams. Fraction of flukeMaxBendDeg removed at full cruise. 0 = off.")]
+    [Range(0f, 1f)] public float flukeDragStiffen = 0.4f;
+
     [Header("Fluke Design (shape + pattern presets; rebuilds on change)")]
     [Tooltip("Fluke DESIGN preset: silhouette (per-lobe flap layout — split betta tails and streamers get several independent bone chains per lobe), edge shape (jagged / scalloped / pointed), pattern texture (stripes, sparkles, scales...) and palette, all from FlukeStyles. Classic = the original hand-tuned leaf using the serialized width curve and toon colors. The near lobe mirrors the far lobe's pattern. Physics knobs above (lag, ripple, bend limits) apply to every design.")]
     public Fluke3DStyle fluke3DStyle = Fluke3DStyle.Classic;
@@ -475,9 +481,13 @@ public class Mermaid2DBootstrap : MonoBehaviour
     readonly List<Mermaid2DBone> neckLinkBones = new List<Mermaid2DBone>();
 
     // Tail/fluke runtime state — tracked separately so we can rebuild on the fly.
+    // Fluke objects/bones live in their OWN lists so a fluke-design swap can rebuild just
+    // the fin while the tail keeps its live wave (no full-tail reset pop).
     readonly List<GameObject> tailGameObjects = new List<GameObject>();
+    readonly List<GameObject> flukeGameObjects = new List<GameObject>();
     readonly List<Mermaid2DBone> tailFlukeBones = new List<Mermaid2DBone>();
     readonly List<Mermaid2DBone> tailBonesOrdered = new List<Mermaid2DBone>();
+    readonly List<Mermaid2DBone> flukeBonesOrdered = new List<Mermaid2DBone>();   // root→tip build order, for prewarm
     readonly HashSet<Mermaid2DBone> tailBoneSet = new HashSet<Mermaid2DBone>();
     readonly HashSet<Mermaid2DBone> flukeBoneSet = new HashSet<Mermaid2DBone>();
     readonly Ribbon2D[] flukeRibbons = new Ribbon2D[2];   // [0]=Up lobe, [1]=Down lobe — twist tunes live
@@ -612,8 +622,10 @@ public class Mermaid2DBootstrap : MonoBehaviour
         neckLinkBones.Clear();
         boneEntries.Clear();
         tailGameObjects.Clear();
+        flukeGameObjects.Clear();
         tailFlukeBones.Clear();
         tailBonesOrdered.Clear();
+        flukeBonesOrdered.Clear();
         tailBoneSet.Clear();
         flukeBoneSet.Clear();
         flukeRibbons[0] = flukeRibbons[1] = null;
@@ -1204,7 +1216,8 @@ public class Mermaid2DBootstrap : MonoBehaviour
                 mb.maxBendAngleDeg = flukeMaxBendDeg;
                 tailFlukeBones.Add(mb);
                 flukeBoneSet.Add(mb);
-                tailGameObjects.Add(seg.gameObject);
+                flukeBonesOrdered.Add(mb);
+                flukeGameObjects.Add(seg.gameObject);
                 prev = seg;
                 prevWorldPos = boneRestPos;
             }
@@ -1216,7 +1229,7 @@ public class Mermaid2DBootstrap : MonoBehaviour
                 flukeArt != null ? Color.white : flukeTipCol,
                 OrderFluke, flukeArt);
             flukeRibbons[s] = ribbon;   // twist fields are pushed every ApplyLiveTick
-            tailGameObjects.Add(ribbon.gameObject);
+            flukeGameObjects.Add(ribbon.gameObject);
         }
     }
 
@@ -1281,7 +1294,7 @@ public class Mermaid2DBootstrap : MonoBehaviour
                     fluke3DBones.Add(bone);
                     fluke3DBoneT.Add(tBone);
                     fluke3DBoneLag.Add(def.lagScale);
-                    tailGameObjects.Add(go);
+                    flukeGameObjects.Add(go);
 
                     tubePoints[i + 1] = go.transform;
                     prev = go.transform;
@@ -1319,7 +1332,7 @@ public class Mermaid2DBootstrap : MonoBehaviour
                 tube.referenceAxis = Vector3.Cross(finNormal, lobeDir).normalized;
                 tube.capEnds = true;
                 flap.tube = tube;
-                tailGameObjects.Add(tgo);
+                flukeGameObjects.Add(tgo);
 
                 // Inverted-hull outline twin: shares the tube's LIVE mesh (deforms for free),
                 // pushed outward along the 3D normals by the unified outline width and drawn at
@@ -1379,7 +1392,7 @@ public class Mermaid2DBootstrap : MonoBehaviour
         li.shadows = LightShadows.None;
         li.enabled = fluke3DLight;
         fluke3DLightRef = li;
-        tailGameObjects.Add(lgo);
+        flukeGameObjects.Add(lgo);
     }
 
     // Live-refresh of every flap's silhouette: Classic reads the serialized width curve
@@ -1787,17 +1800,7 @@ public class Mermaid2DBootstrap : MonoBehaviour
         }
         tailFlukeBones.Clear();
         tailBoneSet.Clear();
-        flukeBoneSet.Clear();
-        flukeRibbons[0] = flukeRibbons[1] = null;
-        fluke3DBones.Clear();
-        fluke3DBoneT.Clear();
-        fluke3DBoneLag.Clear();
-        fluke3DFlaps.Clear();
-        fluke3DLightRef = null;
-        fluke3DHullMat = null;
-        fluke3DSepHull = null;
-        fluke3DSepHullMf = null;
-        fluke3DSepMat = null;
+        ClearFlukeState();
         tailBonesOrdered.Clear();
 
         for (int i = 0; i < tailGameObjects.Count; i++)
@@ -1815,6 +1818,69 @@ public class Mermaid2DBootstrap : MonoBehaviour
 
         RebuildHairColliders();
         EnsureOutlineClones();
+    }
+
+    // Drops every fluke object/bone reference and destroys the fin's GameObjects, leaving
+    // the tail untouched. Shared by the full rebuild above and the flukes-only swap below.
+    void ClearFlukeState()
+    {
+        foreach (var b in flukeBoneSet)
+        {
+            if (b == null) continue;
+            if (chain != null) chain.bones.Remove(b);
+            boneEntries.RemoveAll(e => e.bone == b);
+            tailFlukeBones.Remove(b);
+        }
+        flukeBoneSet.Clear();
+        flukeBonesOrdered.Clear();
+        flukeRibbons[0] = flukeRibbons[1] = null;
+        fluke3DBones.Clear();
+        fluke3DBoneT.Clear();
+        fluke3DBoneLag.Clear();
+        fluke3DFlaps.Clear();
+        fluke3DLightRef = null;
+        fluke3DHullMat = null;
+        fluke3DSepHull = null;
+        fluke3DSepHullMf = null;
+        fluke3DSepMat = null;
+
+        for (int i = 0; i < flukeGameObjects.Count; i++)
+            if (flukeGameObjects[i] != null) Destroy(flukeGameObjects[i]);
+        flukeGameObjects.Clear();
+    }
+
+    // Swap-friendly rebuild for fluke-only changes (design, yaw/roll, length...): replaces
+    // JUST the fin — the tail bones keep their live wave pose — then prewarms the new fin
+    // onto that pose so the swap reads as a seamless costume change, not a swim restart.
+    void RebuildFlukesOnly()
+    {
+        if (root == null || chain == null) return;
+        ClearFlukeState();
+
+        Transform tailTip = (tailBonesOrdered.Count > 0)
+            ? tailBonesOrdered[tailBonesOrdered.Count - 1].transform
+            : (hipPoint != null ? hipPoint : root.Find("Hip"));
+        if (tailTip != null)
+        {
+            BuildFlukes(tailTip);
+            PrewarmFlukes();
+        }
+        EnsureOutlineClones();
+    }
+
+    // Settles a freshly built fin onto the tail tip's CURRENT position/rotation by running
+    // ~2 simulated seconds of bone lag in one gulp (both the true-3D chains and the 2D
+    // ribbon bones, each ticked root→tip in build order). Without this the new fin pops in
+    // at its rest orientation and visibly re-grows into the swim.
+    void PrewarmFlukes()
+    {
+        const float dt = 1f / 45f;
+        for (int step = 0; step < 90; step++)
+        {
+            for (int i = 0; i < flukeBonesOrdered.Count; i++)
+                if (flukeBonesOrdered[i] != null) flukeBonesOrdered[i].Tick(dt);
+            TickFluke3DBones(dt);
+        }
     }
 
     // ---------------------------------------------------------------- build: world
@@ -1976,11 +2042,16 @@ public class Mermaid2DBootstrap : MonoBehaviour
         _lastHairScalpRadius = hairScalpRadius;
     }
 
-    bool TailFlukeShapeChanged()
+    bool TailShapeChanged()
     {
         return tailSegments != _lastTailSegments
-            || !Mathf.Approximately(tailLength, _lastTailLength)
-            || flukeBonesPerLobe != _lastFlukeBonesPerLobe
+            || !Mathf.Approximately(tailLength, _lastTailLength);
+    }
+
+    // Fluke-only changes take the seamless RebuildFlukesOnly path (tail keeps its wave).
+    bool FlukeShapeChanged()
+    {
+        return flukeBonesPerLobe != _lastFlukeBonesPerLobe
             || !Mathf.Approximately(flukeSpan, _lastFlukeSpan)
             || !Mathf.Approximately(flukeSweep, _lastFlukeSweep)
             || flukeTrue3D != _lastFlukeTrue3D
@@ -2014,8 +2085,10 @@ public class Mermaid2DBootstrap : MonoBehaviour
         ApplyLiveTick();
 
         // Shape changes — rebuild affected groups. (Edit mode instead rebuilds the whole
-        // preview via OnValidate, so this only runs in play.)
-        if (TailFlukeShapeChanged()) RebuildTailAndFluke();
+        // preview via OnValidate, so this only runs in play.) Fluke-only changes swap just
+        // the fin and prewarm it onto the tail's live pose — seamless mid-swim.
+        if (TailShapeChanged()) RebuildTailAndFluke();
+        else if (FlukeShapeChanged()) RebuildFlukesOnly();
         if (HairShapeChanged()) RebuildHair();
         SnapshotShapeValues();
 
@@ -2028,10 +2101,20 @@ public class Mermaid2DBootstrap : MonoBehaviour
     // so the preview's motion tuning — flow multipliers, bend limits — matches play exactly.
     void ApplyLiveTick()
     {
+        // Water drag: her apparent speed over the ground (the same [0.6, 0.97] motionScale
+        // remap the seaweed treadmill uses for the scroll) streams the flukes — lag shrinks
+        // (waves get less time to settle = flatter, trailing) and the bend limit tightens
+        // (rushing water won't let the fin fold up). At speed 0 (rummage/idle) both revert
+        // to exactly the old feel, so the fin visibly relaxes when she stops.
+        float dragSpeed01 = swimmer != null
+            ? Mathf.InverseLerp(0.6f, 0.97f, swimmer.motionScale) : 0f;
+        float flukeDragLagMult = 1f / (1f + Mathf.Max(0f, flukeDragStretch) * dragSpeed01);
+        float flukeDragBendDeg = flukeMaxBendDeg * (1f - Mathf.Clamp01(flukeDragStiffen) * dragSpeed01);
+
         // 1. Live smoothTime updates with per-group flow multipliers.
         float gm = Mathf.Max(0f, globalSmoothMultiplier);
         float tm = Mathf.Max(0.01f, tailFlowMultiplier);
-        float fm = Mathf.Max(0.01f, flukeFlowMultiplier);
+        float fm = Mathf.Max(0.01f, flukeFlowMultiplier) * flukeDragLagMult;
         float hm = Mathf.Max(0.01f, hairFlowMultiplier);
         float am = Mathf.Max(0.01f, armFlowMultiplier);
         // Rummage: stiffen the arms while she digs so the elbows read as controlled work
@@ -2076,7 +2159,7 @@ public class Mermaid2DBootstrap : MonoBehaviour
         for (int i = 0; i < tailBonesOrdered.Count; i++)
             if (tailBonesOrdered[i] != null) tailBonesOrdered[i].maxBendAngleDeg = tailMaxBendDeg;
         foreach (var fb in flukeBoneSet)
-            if (fb != null) fb.maxBendAngleDeg = flukeMaxBendDeg;
+            if (fb != null) fb.maxBendAngleDeg = flukeDragBendDeg;
 
         // 3c. Fluke 3D ribbon twist — live tuning, per-lobe phase split, and the wave
         // amplitude rides the swim liveliness so the ribbon calms while she rummages.
@@ -2109,10 +2192,11 @@ public class Mermaid2DBootstrap : MonoBehaviour
                 if (b == null) continue;
                 // Waviness lives here: the root→tip lag spread stretches the tail-beat wave
                 // out along each lobe, so raising fluke3DTipLag adds traveling waves live.
-                // fluke3DBoneLag carries the flap's style multiplier (streamers = floppier).
+                // fluke3DBoneLag carries the flap's style multiplier (streamers = floppier);
+                // flukeDragLagMult / flukeDragBendDeg add the speed-dependent water drag.
                 b.smoothTime = Mathf.Lerp(fluke3DBaseLag, fluke3DTipLag, fluke3DBoneT[i])
-                             * fluke3DBoneLag[i] * f3m;
-                b.maxBendAngleDeg = flukeMaxBendDeg;
+                             * fluke3DBoneLag[i] * f3m * flukeDragLagMult;
+                b.maxBendAngleDeg = flukeDragBendDeg;
             }
             RefreshFluke3DTubes();
 
