@@ -189,35 +189,69 @@ public static class FlukeStyles
     // ------------------------------------------------------------------ pattern textures
 
     const int TexSize = 256;
-    static readonly Dictionary<Fluke3DStyle, Texture2D> texCache = new Dictionary<Fluke3DStyle, Texture2D>();
+    static readonly Dictionary<int, Texture2D> texCache = new Dictionary<int, Texture2D>();
 
-    /// Procedural pattern texture for the style (null for Classic = untextured toon).
-    /// Cached; regenerated if the cached object was destroyed (play-mode transitions).
+    /// Procedural pattern texture for a built-in enum style (null for Classic = untextured
+    /// toon). The enum styles map onto the same color-parameterized generators the
+    /// FlukeStyleAsset path uses.
     public static Texture2D GetTexture(Fluke3DStyle style)
     {
-        if (style == Fluke3DStyle.Classic) return null;
-        if (texCache.TryGetValue(style, out var cached) && cached != null) return cached;
+        switch (style)
+        {
+            case Fluke3DStyle.TealCrescent:
+                return GetTexture(FlukePattern.Gradient, new Color(0.09f, 0.42f, 0.50f), new Color(0.42f, 0.88f, 0.86f));
+            case Fluke3DStyle.CoralJag:
+                return GetTexture(FlukePattern.Stripes, new Color(0.96f, 0.44f, 0.36f), new Color(1.00f, 0.93f, 0.80f));
+            case Fluke3DStyle.BettaSplit:
+                return GetTexture(FlukePattern.Sparkle, new Color(0.27f, 0.14f, 0.46f), new Color(0.60f, 0.22f, 0.60f));
+            case Fluke3DStyle.GoldfishFan:
+                return GetTexture(FlukePattern.Scales, new Color(1.00f, 0.62f, 0.20f), new Color(0.70f, 0.33f, 0.10f));
+            case Fluke3DStyle.SilkStreamers:
+                return GetTexture(FlukePattern.Iridescent, Color.HSVToRGB(0.48f, 0.38f, 1f), Color.HSVToRGB(0.90f, 0.38f, 1f));
+            case Fluke3DStyle.RosePetal:
+                return GetTexture(FlukePattern.Gradient, new Color(0.95f, 0.55f, 0.65f), new Color(1.00f, 0.90f, 0.75f));
+            default:
+                return null;
+        }
+    }
+
+    /// Pattern texture for a FlukeStyleAsset: its painted customTexture if assigned, else
+    /// a procedural pattern generated from its two colors (null when pattern is None).
+    public static Texture2D GetTexture(FlukeStyleAsset asset)
+    {
+        if (asset == null) return null;
+        if (asset.customTexture != null) return asset.customTexture;
+        return GetTexture(asset.pattern, asset.patternColorA, asset.patternColorB);
+    }
+
+    /// Cached by (pattern, colors) so identical requests share one texture and edited
+    /// colors mint a fresh one on the next fin rebuild.
+    public static Texture2D GetTexture(FlukePattern pattern, Color a, Color b)
+    {
+        if (pattern == FlukePattern.None) return null;
+        int key;
+        unchecked { key = ((17 * 31 + (int)pattern) * 31 + a.GetHashCode()) * 31 + b.GetHashCode(); }
+        if (texCache.TryGetValue(key, out var cached) && cached != null) return cached;
 
         var tex = new Texture2D(TexSize, TexSize, TextureFormat.RGBA32, false)
         {
-            name = $"FlukePattern_{style}",
+            name = $"FlukePattern_{pattern}",
             wrapMode = TextureWrapMode.Repeat,
             filterMode = FilterMode.Bilinear,
             hideFlags = HideFlags.HideAndDontSave,
         };
         var px = new Color[TexSize * TexSize];
-        switch (style)
+        switch (pattern)
         {
-            case Fluke3DStyle.TealCrescent: FillTeal(px); break;
-            case Fluke3DStyle.CoralJag: FillStripes(px); break;
-            case Fluke3DStyle.BettaSplit: FillSparkle(px); break;
-            case Fluke3DStyle.GoldfishFan: FillScales(px); break;
-            case Fluke3DStyle.SilkStreamers: FillIridescent(px); break;
-            case Fluke3DStyle.RosePetal: FillRosePetal(px); break;
+            case FlukePattern.Gradient: FillGradient(px, a, b); break;
+            case FlukePattern.Stripes: FillStripes(px, a, b); break;
+            case FlukePattern.Sparkle: FillSparkle(px, a, b); break;
+            case FlukePattern.Scales: FillScales(px, a, b); break;
+            case FlukePattern.Iridescent: FillIridescent(px, a, b); break;
         }
         tex.SetPixels(px);
         tex.Apply(false, true);
-        texCache[style] = tex;
+        texCache[key] = tex;
         return tex;
     }
 
@@ -231,11 +265,9 @@ public static class FlukeStyles
         return h - Mathf.Floor(h);
     }
 
-    static void FillTeal(Color[] px)
+    static void FillGradient(Color[] px, Color root, Color tip)
     {
-        // Uni-colored: deep teal melting to bright aqua toward the tip, whisper of grain.
-        Color root = new Color(0.09f, 0.42f, 0.50f);
-        Color tip = new Color(0.42f, 0.88f, 0.86f);
+        // Uni-colored: root color melting toward the tip color, whisper of grain.
         for (int y = 0; y < TexSize; y++)
         {
             float v = y / (float)(TexSize - 1);
@@ -248,11 +280,9 @@ public static class FlukeStyles
         }
     }
 
-    static void FillStripes(Color[] px)
+    static void FillStripes(Color[] px, Color a, Color b)
     {
-        // Bold coral / cream bands marching root → tip, soft-edged.
-        Color a = new Color(0.96f, 0.44f, 0.36f);
-        Color b = new Color(1.00f, 0.93f, 0.80f);
+        // Bold two-tone bands marching root → tip, soft-edged.
         for (int y = 0; y < TexSize; y++)
         {
             float v = y / (float)(TexSize - 1);
@@ -264,11 +294,9 @@ public static class FlukeStyles
         }
     }
 
-    static void FillSparkle(Color[] px)
+    static void FillSparkle(Color[] px, Color root, Color tip)
     {
-        // Deep violet → magenta silk, dusted with seeded glitter (soft gaussian dots).
-        Color root = new Color(0.27f, 0.14f, 0.46f);
-        Color tip = new Color(0.60f, 0.22f, 0.60f);
+        // Root → tip silk gradient, dusted with seeded glitter (soft gaussian dots).
         for (int y = 0; y < TexSize; y++)
         {
             float v = y / (float)(TexSize - 1);
@@ -305,12 +333,10 @@ public static class FlukeStyles
         }
     }
 
-    static void FillScales(Color[] px)
+    static void FillScales(Color[] px, Color body, Color rim)
     {
-        // Overlapping fish scales: an offset grid of rim-shaded discs, goldfish orange
+        // Overlapping fish scales: an offset grid of rim-shaded discs, the body color
         // lightening toward the tip. Cell sizes divide 256 so the pattern tiles.
-        Color body = new Color(1.00f, 0.62f, 0.20f);
-        Color rim = new Color(0.70f, 0.33f, 0.10f);
         const float cellW = 32f, rowH = 32f;
         float rad = cellW * 0.68f;
         for (int y = 0; y < TexSize; y++)
@@ -342,36 +368,23 @@ public static class FlukeStyles
         }
     }
 
-    static void FillRosePetal(Color[] px)
+    static void FillIridescent(Color[] px, Color a, Color b)
     {
-        // Rose melting to cream-gold toward the tip — the walkthrough example style.
-        Color root = new Color(0.95f, 0.55f, 0.65f);
-        Color tip = new Color(1.00f, 0.90f, 0.75f);
-        for (int y = 0; y < TexSize; y++)
-        {
-            float v = y / (float)(TexSize - 1);   // 0 = fin ROOT, 1 = fin TIP
-            Color band = Color.Lerp(root, tip, v);
-            for (int x = 0; x < TexSize; x++)
-            {
-                float n = (Hash(x, y) - 0.5f) * 0.04f;   // whisper of petal grain
-                px[y * TexSize + x] = new Color(band.r + n, band.g + n, band.b + n, 1f);
-            }
-        }
-    }
-
-    static void FillIridescent(Color[] px)
-    {
-        // Soft pastel hue sweep along the streamer + faint diagonal shimmer bands.
+        // Hue sweep from color A's hue to color B's hue along the fin (wrapping forward
+        // around the color wheel), A's saturation, plus faint diagonal shimmer bands.
+        Color.RGBToHSV(a, out float h1, out float s1, out float v1);
+        Color.RGBToHSV(b, out float h2, out _, out _);
+        float span = Mathf.Repeat(h2 - h1, 1f);
         for (int y = 0; y < TexSize; y++)
         {
             float v = y / (float)(TexSize - 1);
             for (int x = 0; x < TexSize; x++)
             {
                 float u = x / (float)(TexSize - 1);
-                float hue = Mathf.Repeat(0.48f + 0.42f * v, 1f);
+                float hue = Mathf.Repeat(h1 + span * v, 1f);
                 float shimmer = 0.06f * Mathf.Sin((u * 4f + v * 9f) * 2f * Mathf.PI)
                               + 0.04f * Mathf.Sin(v * 10f * Mathf.PI);
-                Color c = Color.HSVToRGB(hue, 0.38f, Mathf.Clamp01(0.97f + shimmer));
+                Color c = Color.HSVToRGB(hue, s1, Mathf.Clamp01(v1 * 0.97f + shimmer));
                 px[y * TexSize + x] = new Color(c.r, c.g, c.b, 1f);
             }
         }

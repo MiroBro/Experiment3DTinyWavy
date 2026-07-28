@@ -201,7 +201,11 @@ public class Mermaid2DBootstrap : MonoBehaviour
     [Range(0f, 1f)] public float flukeDragStiffen = 0.4f;
 
     [Header("Fluke Design (shape + pattern presets; rebuilds on change)")]
-    [Tooltip("Fluke DESIGN preset: silhouette (per-lobe flap layout — split betta tails and streamers get several independent bone chains per lobe), edge shape (jagged / scalloped / pointed), pattern texture (stripes, sparkles, scales...) and palette, all from FlukeStyles. Classic = the original hand-tuned leaf using the serialized width curve and toon colors. The near lobe mirrors the far lobe's pattern. Physics knobs above (lag, ripple, bend limits) apply to every design.")]
+    [Tooltip("Wardrobe of FlukeStyleAsset designs (Assets > Create > Mermaid > Fluke Style). Each asset carries its OWN shape (flaps, silhouette), look (pattern, palette) and motion feel (lag, ripple, water drag) — edit the asset and the fin updates live, even mid-play. EMPTY = auto-load every FlukeStyleAsset under any Resources/FlukeStyles folder, sorted by name (the built-in designs ship there). If none exist anywhere, the legacy enum preset below is used.")]
+    public FlukeStyleAsset[] flukeStyleAssets;
+    [Tooltip("Which wardrobe design is worn (wraps around). The play-mode button cycles this.")]
+    public int flukeStyleIndex;
+    [Tooltip("LEGACY code-defined preset — only used when no FlukeStyleAssets are available (wardrobe empty and no Resources/FlukeStyles). Kept as a fallback.")]
     public Fluke3DStyle fluke3DStyle = Fluke3DStyle.Classic;
     [Tooltip("Show an on-screen button in play mode that cycles through the fluke designs.")]
     public bool fluke3DStyleButton = true;
@@ -499,6 +503,7 @@ public class Mermaid2DBootstrap : MonoBehaviour
         public TubeRenderer tube;
         public int lobe;             // 0 = far (+Z), 1 = near (−Z)
         public int profile;          // FlukeStyles.Profile id (0 = serialized flukeWidthCurve)
+        public FlukeStyleAsset asset;   // owning design asset (null on the legacy enum path)
         public float widthScale;     // flap width × style multiplier
         public Material mat;         // per-flap toon instance (null when custom override / non-toon)
         public MeshRenderer hull;    // inverted-hull outline twin
@@ -556,6 +561,8 @@ public class Mermaid2DBootstrap : MonoBehaviour
     float _lastFluke3DLength = float.NaN;
     float _lastFluke3DSpread = float.NaN;
     Fluke3DStyle _lastFluke3DStyle;
+    FlukeStyleAsset _lastFlukeStyleAsset;
+    int _lastFlukeStyleContentHash;
     int _lastHairStrandCount = -1;
     int _lastHairBonesPerStrand = -1;
     float _lastHairStrandLength = float.NaN;
@@ -738,6 +745,16 @@ public class Mermaid2DBootstrap : MonoBehaviour
         if (root == null || swimmer == null || chain == null) return;
 
         ApplyLiveTick();
+
+        // Live SO tuning: editing a worn FlukeStyleAsset's shape/look in the inspector
+        // re-fits just the fin onto the swimming preview (asset edits don't fire the
+        // bootstrap's OnValidate, so the full preview rebuild never sees them).
+        if (FlukeShapeChanged())
+        {
+            RebuildFlukesOnly();
+            SnapshotShapeValues();
+        }
+
         swimmer.Step(dt);
         chain.TickAll(dt);
         TickFluke3DBones(dt);   // true-3D flukes lag the freshly ticked 2D tail tip
@@ -1240,6 +1257,29 @@ public class Mermaid2DBootstrap : MonoBehaviour
     // a side camera would see it edge-on). Bones are ticked by this component's LateUpdate
     // (play) / EditorPreviewTick (preview), between the 2D chain (−50) and TubeRenderer (50).
     // The unified outline never touches these: it only targets Ribbon2D + named sprites.
+    // The wardrobe: explicit array if populated, else every FlukeStyleAsset found under
+    // Resources/FlukeStyles (sorted by name; cached). May legitimately be empty — the
+    // legacy enum designs then take over.
+    static FlukeStyleAsset[] _resourceStyles;
+    FlukeStyleAsset[] StyleAssetList()
+    {
+        if (flukeStyleAssets != null && flukeStyleAssets.Length > 0) return flukeStyleAssets;
+        if (_resourceStyles == null || _resourceStyles.Length == 0)
+        {
+            _resourceStyles = Resources.LoadAll<FlukeStyleAsset>("FlukeStyles");
+            System.Array.Sort(_resourceStyles, (x, y) => string.CompareOrdinal(x.name, y.name));
+        }
+        return _resourceStyles;
+    }
+
+    FlukeStyleAsset ActiveFlukeStyle()
+    {
+        var list = StyleAssetList();
+        int n = list != null ? list.Length : 0;
+        if (n == 0) return null;
+        return list[((flukeStyleIndex % n) + n) % n];
+    }
+
     void BuildFlukes3D(Transform tailTip)
     {
         int n = Mathf.Max(1, flukeBonesPerLobe);
@@ -1249,11 +1289,36 @@ public class Mermaid2DBootstrap : MonoBehaviour
                         * Quaternion.AngleAxis(fluke3DRollDeg, Vector3.right);
         Vector3 finNormal = look * Vector3.up;
 
-        // The active design: flap layout + silhouette profiles + pattern (FlukeStyles).
-        // Classic = one flap per lobe with the serialized width curve — the original fin.
-        var defs = FlukeStyles.GetFlaps(fluke3DStyle);
-        int sub = FlukeStyles.Subdivisions(fluke3DStyle);
-        Texture2D pattern = FlukeStyles.GetTexture(fluke3DStyle);
+        // The active design: a FlukeStyleAsset when one is available (its flaps, profile,
+        // pattern and aspect), else the legacy enum catalog. Classic enum = one flap per
+        // lobe with the serialized width curve — the original fin.
+        var styleAsset = ActiveFlukeStyle();
+        FlukeStyles.FlapDef[] defs;
+        int sub;
+        Texture2D pattern;
+        float finAspect;
+        if (styleAsset != null)
+        {
+            var srcFlaps = (styleAsset.flaps != null && styleAsset.flaps.Length > 0)
+                ? styleAsset.flaps : new[] { new FlukeStyleAsset.Flap() };
+            defs = new FlukeStyles.FlapDef[srcFlaps.Length];
+            for (int i = 0; i < srcFlaps.Length; i++)
+            {
+                var sf = srcFlaps[i] ?? new FlukeStyleAsset.Flap();
+                // profile −1 = "evaluate through the asset" (built-in id or custom curve)
+                defs[i] = new FlukeStyles.FlapDef(sf.angleDeg, sf.lengthScale, sf.widthScale, sf.lagScale, -1);
+            }
+            sub = styleAsset.subdivisions;
+            pattern = FlukeStyles.GetTexture(styleAsset);
+            finAspect = styleAsset.aspect;
+        }
+        else
+        {
+            defs = FlukeStyles.GetFlaps(fluke3DStyle);
+            sub = FlukeStyles.Subdivisions(fluke3DStyle);
+            pattern = FlukeStyles.GetTexture(fluke3DStyle);
+            finAspect = fluke3DAspect;
+        }
 
         for (int s = 0; s < 2; s++)
         {
@@ -1305,7 +1370,7 @@ public class Mermaid2DBootstrap : MonoBehaviour
                 tgo.transform.SetParent(root, false);
                 tgo.AddComponent<MeshFilter>();
                 var mr = tgo.AddComponent<MeshRenderer>();
-                var flap = new Fluke3DFlap { lobe = s, profile = def.profile, widthScale = def.widthScale };
+                var flap = new Fluke3DFlap { lobe = s, profile = def.profile, asset = styleAsset, widthScale = def.widthScale };
                 mr.sharedMaterial = Fluke3DFlapMaterial(flap, pattern, s);
                 mr.shadowCastingMode = UnityEngine.Rendering.ShadowCastingMode.Off;
                 mr.receiveShadows = false;
@@ -1322,7 +1387,7 @@ public class Mermaid2DBootstrap : MonoBehaviour
                 tube.subdivisions = sub;
                 if (def.profile != 0) tube.radiusProfile = new float[64];
                 tube.sides = fluke3DTubeSides;
-                tube.aspectRatio = fluke3DAspect;
+                tube.aspectRatio = finAspect;
                 // Keep each ring's WIDE axis in the rolled/yawed fin plane, perpendicular to the
                 // lobe. (WorldUpAligned — the 3D scene's choice — assumes a horizontal fin and
                 // would fight the roll.)
@@ -1407,8 +1472,19 @@ public class Mermaid2DBootstrap : MonoBehaviour
             var tube = flap.tube;
             if (tube == null) continue;
             tube.sides = fluke3DTubeSides;
-            tube.aspectRatio = fluke3DAspect;
-            if (flap.profile == 0)
+            tube.aspectRatio = flap.asset != null ? flap.asset.aspect : fluke3DAspect;
+            if (flap.asset != null)
+            {
+                var prof = tube.radiusProfile;
+                if (prof == null) continue;
+                for (int j = 0; j < prof.Length; j++)
+                {
+                    float t = prof.Length > 1 ? j / (float)(prof.Length - 1) : 0f;
+                    prof[j] = Mathf.Max(0.001f,
+                        flap.asset.EvaluateProfile(t) * flap.widthScale * fluke3DWidthScale);
+                }
+            }
+            else if (flap.profile == 0)
             {
                 var radii = tube.radii;
                 if (radii == null) continue;
@@ -1474,11 +1550,23 @@ public class Mermaid2DBootstrap : MonoBehaviour
     void OnGUI()
     {
         if (!Application.isPlaying || !fluke3DStyleButton || !flukeTrue3D) return;
+        var list = StyleAssetList();
+        bool usingAssets = list != null && list.Length > 0;
+        var worn = ActiveFlukeStyle();
+        string label = worn != null ? worn.DisplayName : FlukeStyles.DisplayName(fluke3DStyle);
         var rect = new Rect(12f, Screen.height - 46f, 250f, 34f);
-        if (GUI.Button(rect, $"Fluke: {FlukeStyles.DisplayName(fluke3DStyle)}  ▶"))
+        if (GUI.Button(rect, $"Fluke: {label}  ▶"))
         {
-            int count = System.Enum.GetValues(typeof(Fluke3DStyle)).Length;
-            fluke3DStyle = (Fluke3DStyle)(((int)fluke3DStyle + 1) % count);
+            if (usingAssets)
+            {
+                int n = list.Length;
+                flukeStyleIndex = (((flukeStyleIndex % n) + n) % n + 1) % n;
+            }
+            else
+            {
+                int count = System.Enum.GetValues(typeof(Fluke3DStyle)).Length;
+                fluke3DStyle = (Fluke3DStyle)(((int)fluke3DStyle + 1) % count);
+            }
         }
     }
 
@@ -1845,7 +1933,12 @@ public class Mermaid2DBootstrap : MonoBehaviour
         fluke3DSepMat = null;
 
         for (int i = 0; i < flukeGameObjects.Count; i++)
-            if (flukeGameObjects[i] != null) Destroy(flukeGameObjects[i]);
+            if (flukeGameObjects[i] != null)
+            {
+                // Edit-mode preview rebuilds (live SO tuning) must use DestroyImmediate.
+                if (Application.isPlaying) Destroy(flukeGameObjects[i]);
+                else DestroyImmediate(flukeGameObjects[i]);
+            }
         flukeGameObjects.Clear();
     }
 
@@ -2032,6 +2125,8 @@ public class Mermaid2DBootstrap : MonoBehaviour
         _lastFluke3DLength = fluke3DLength;
         _lastFluke3DSpread = fluke3DSpread;
         _lastFluke3DStyle = fluke3DStyle;
+        _lastFlukeStyleAsset = ActiveFlukeStyle();
+        _lastFlukeStyleContentHash = _lastFlukeStyleAsset != null ? _lastFlukeStyleAsset.ContentHash() : 0;
         _lastHairStrandCount = hairStrandCount;
         _lastHairBonesPerStrand = hairBonesPerStrand;
         _lastHairStrandLength = hairStrandLength;
@@ -2049,8 +2144,11 @@ public class Mermaid2DBootstrap : MonoBehaviour
     }
 
     // Fluke-only changes take the seamless RebuildFlukesOnly path (tail keeps its wave).
+    // Covers the worn FlukeStyleAsset too: switching assets AND editing a worn asset's
+    // shape/look fields (via ContentHash) rebuild the fin live.
     bool FlukeShapeChanged()
     {
+        var worn = ActiveFlukeStyle();
         return flukeBonesPerLobe != _lastFlukeBonesPerLobe
             || !Mathf.Approximately(flukeSpan, _lastFlukeSpan)
             || !Mathf.Approximately(flukeSweep, _lastFlukeSweep)
@@ -2059,7 +2157,9 @@ public class Mermaid2DBootstrap : MonoBehaviour
             || !Mathf.Approximately(fluke3DRollDeg, _lastFluke3DRoll)
             || !Mathf.Approximately(fluke3DLength, _lastFluke3DLength)
             || !Mathf.Approximately(fluke3DSpread, _lastFluke3DSpread)
-            || fluke3DStyle != _lastFluke3DStyle;
+            || fluke3DStyle != _lastFluke3DStyle
+            || worn != _lastFlukeStyleAsset
+            || (worn != null && worn.ContentHash() != _lastFlukeStyleContentHash);
     }
 
     bool HairShapeChanged()
@@ -2105,11 +2205,15 @@ public class Mermaid2DBootstrap : MonoBehaviour
         // remap the seaweed treadmill uses for the scroll) streams the flukes — lag shrinks
         // (waves get less time to settle = flatter, trailing) and the bend limit tightens
         // (rushing water won't let the fin fold up). At speed 0 (rummage/idle) both revert
-        // to exactly the old feel, so the fin visibly relaxes when she stops.
+        // to exactly the old feel, so the fin visibly relaxes when she stops. When a
+        // FlukeStyleAsset is worn, ITS drag/lag/ripple tuning replaces the bootstrap's.
+        var wornStyle = ActiveFlukeStyle();
+        float dragStretchEff = wornStyle != null ? wornStyle.dragStretch : flukeDragStretch;
+        float dragStiffenEff = wornStyle != null ? wornStyle.dragStiffen : flukeDragStiffen;
         float dragSpeed01 = swimmer != null
             ? Mathf.InverseLerp(0.6f, 0.97f, swimmer.motionScale) : 0f;
-        float flukeDragLagMult = 1f / (1f + Mathf.Max(0f, flukeDragStretch) * dragSpeed01);
-        float flukeDragBendDeg = flukeMaxBendDeg * (1f - Mathf.Clamp01(flukeDragStiffen) * dragSpeed01);
+        float flukeDragLagMult = 1f / (1f + Mathf.Max(0f, dragStretchEff) * dragSpeed01);
+        float flukeDragBendDeg = flukeMaxBendDeg * (1f - Mathf.Clamp01(dragStiffenEff) * dragSpeed01);
 
         // 1. Live smoothTime updates with per-group flow multipliers.
         float gm = Mathf.Max(0f, globalSmoothMultiplier);
@@ -2185,27 +2289,33 @@ public class Mermaid2DBootstrap : MonoBehaviour
         // 3d. True-3D flukes: live smoothing / bend limits / tube shape + key light toggle.
         if (fluke3DBones.Count > 0)
         {
+            // Per-design motion: a worn FlukeStyleAsset supplies its own lag and ripple
+            // numbers; the bootstrap fields serve the legacy enum path.
+            float lagBase = wornStyle != null ? wornStyle.baseLag : fluke3DBaseLag;
+            float lagTip = wornStyle != null ? wornStyle.tipLag : fluke3DTipLag;
             float f3m = Mathf.Max(0f, globalSmoothMultiplier) * Mathf.Max(0.01f, flukeFlowMultiplier);
             for (int i = 0; i < fluke3DBones.Count; i++)
             {
                 var b = fluke3DBones[i];
                 if (b == null) continue;
                 // Waviness lives here: the root→tip lag spread stretches the tail-beat wave
-                // out along each lobe, so raising fluke3DTipLag adds traveling waves live.
+                // out along each lobe, so raising the tip lag adds traveling waves live.
                 // fluke3DBoneLag carries the flap's style multiplier (streamers = floppier);
                 // flukeDragLagMult / flukeDragBendDeg add the speed-dependent water drag.
-                b.smoothTime = Mathf.Lerp(fluke3DBaseLag, fluke3DTipLag, fluke3DBoneT[i])
+                b.smoothTime = Mathf.Lerp(lagBase, lagTip, fluke3DBoneT[i])
                              * fluke3DBoneLag[i] * f3m * flukeDragLagMult;
                 b.maxBendAngleDeg = flukeDragBendDeg;
             }
             RefreshFluke3DTubes();
 
             bool hullOn = outlineMode == OutlineMode.BlackClones && outlineWidth > 0.0001f;
-            // Classic keeps the serialized toon colors; styled designs bring their own
-            // palette (their pattern texture carries the hue, so bases stay near-white).
+            // Palette: the worn asset's colors; else Classic keeps the serialized toon
+            // colors and the other enum designs bring their own from the catalog.
             bool classicLook = fluke3DStyle == Fluke3DStyle.Classic;
-            Color toonBase = classicLook ? fluke3DToonBase : FlukeStyles.ToonBase(fluke3DStyle);
-            Color toonShade = classicLook ? fluke3DToonShade : FlukeStyles.ToonShade(fluke3DStyle);
+            Color toonBase = wornStyle != null ? wornStyle.toonBase
+                : (classicLook ? fluke3DToonBase : FlukeStyles.ToonBase(fluke3DStyle));
+            Color toonShade = wornStyle != null ? wornStyle.toonShade
+                : (classicLook ? fluke3DToonShade : FlukeStyles.ToonShade(fluke3DStyle));
 
             for (int i = 0; i < fluke3DFlaps.Count; i++)
             {
@@ -2215,11 +2325,12 @@ public class Mermaid2DBootstrap : MonoBehaviour
                 // Skirt-hem flutter, phase-offset per flap so nothing flaps in sync.
                 if (tube != null)
                 {
-                    tube.rippleAmplitude = fluke3DRippleAmp;
-                    tube.rippleCycles = fluke3DRippleCycles;
-                    tube.rippleHz = fluke3DRippleHz;
-                    tube.rippleEdgeBias = fluke3DRippleEdgeBias;
-                    tube.rippleCurl = fluke3DRippleCurl;
+                    var fa = flap.asset;
+                    tube.rippleAmplitude = fa != null ? fa.rippleAmp : fluke3DRippleAmp;
+                    tube.rippleCycles = fa != null ? fa.rippleCycles : fluke3DRippleCycles;
+                    tube.rippleHz = fa != null ? fa.rippleHz : fluke3DRippleHz;
+                    tube.rippleEdgeBias = fa != null ? fa.rippleEdgeBias : fluke3DRippleEdgeBias;
+                    tube.rippleCurl = fa != null ? fa.rippleCurl : fluke3DRippleCurl;
                     tube.ripplePhaseDeg = i * 137f;
                 }
 

@@ -1,0 +1,89 @@
+%YAML 1.1
+%TAG !u! tag:unity3d.com,2011:
+--- !u!114 &11400000
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 0}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 7c4e9a2d1f8b4c6ea3d5f7092b4e6c81, type: 3}
+  m_Name: 05 Silk Streamers
+  m_EditorClassIdentifier:
+  displayName: Silk Streamers
+  flaps:
+  - angleDeg: -13
+    lengthScale: 1.3
+    widthScale: 1
+    lagScale: 1.7
+  - angleDeg: 3
+    lengthScale: 1.05
+    widthScale: 1
+    lagScale: 1.9
+  - angleDeg: 18
+    lengthScale: 0.8
+    widthScale: 1
+    lagScale: 2.1
+  builtInProfile: 5
+  useCustomProfile: 0
+  customProfile:
+    serializedVersion: 2
+    m_Curve:
+    - serializedVersion: 3
+      time: 0
+      value: 0.05
+      inSlope: 1.29
+      outSlope: 1.29
+      tangentMode: 0
+      weightedMode: 0
+      inWeight: 0.33333334
+      outWeight: 0.33333334
+    - serializedVersion: 3
+      time: 0.632
+      value: 0.18
+      inSlope: -0.246
+      outSlope: -0.246
+      tangentMode: 0
+      weightedMode: 0
+      inWeight: 0.33333334
+      outWeight: 0.33333334
+    - serializedVersion: 3
+      time: 0.939
+      value: 0.033
+      inSlope: -0.139
+      outSlope: -0.139
+      tangentMode: 0
+      weightedMode: 0
+      inWeight: 0.33333334
+      outWeight: 0.33333334
+    - serializedVersion: 3
+      time: 1
+      value: 0.004
+      inSlope: -1
+      outSlope: -1
+      tangentMode: 0
+      weightedMode: 0
+      inWeight: 0.33333334
+      outWeight: 0.33333334
+    m_PreInfinity: 2
+    m_PostInfinity: 2
+    m_RotationOrder: 4
+  subdivisions: 4
+  aspect: 0.117
+  pattern: 5
+  patternColorA: {r: 0.62, g: 1, b: 0.954, a: 1}
+  patternColorB: {r: 1, g: 0.62, b: 0.848, a: 1}
+  customTexture: {fileID: 0}
+  toonBase: {r: 1, g: 1, b: 1, a: 1}
+  toonShade: {r: 0.62, g: 0.6, b: 0.74, a: 1}
+  baseLag: 0.228
+  tipLag: 0.3
+  rippleAmp: 0.4
+  rippleCycles: 2.35
+  rippleHz: 1.83
+  rippleEdgeBias: 4.5
+  rippleCurl: 1
+  dragStretch: 0.9
+  dragStiffen: 0.4
