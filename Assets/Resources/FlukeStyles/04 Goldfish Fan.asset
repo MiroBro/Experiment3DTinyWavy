@@ -19,19 +19,19 @@ MonoBehaviour:
     widthScale: 1.45
     lagScale: 0.9
   builtInProfile: 4
-  useCustomProfile: 0
+  useCustomProfile: 1
   customProfile:
     serializedVersion: 2
     m_Curve:
     - serializedVersion: 3
       time: 0
       value: 0.05
-      inSlope: 1.29
-      outSlope: 1.29
+      inSlope: 1.2214532
+      outSlope: 1.2214532
       tangentMode: 0
       weightedMode: 0
       inWeight: 0.33333334
-      outWeight: 0.33333334
+      outWeight: 0.033752546
     - serializedVersion: 3
       time: 0.632
       value: 0.18
