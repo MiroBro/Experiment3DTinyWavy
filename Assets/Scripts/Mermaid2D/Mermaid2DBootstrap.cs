@@ -210,6 +210,20 @@ public class Mermaid2DBootstrap : MonoBehaviour
     [Tooltip("Show an on-screen button in play mode that cycles through the fluke designs.")]
     public bool fluke3DStyleButton = true;
 
+    [Header("Scene Mood / Lighting (live; tints the whole 2D world AND the 3D fluke)")]
+    [Tooltip("Lighting mood. The sprites are unlit, so this works as a light-grade: a fullscreen overlay multiplies everything the camera renders (Night dims blue, Kelp Forest goes green murk, Bubbly Bright lifts and warms — channels >1 brighten) plus an additive haze, while the 3D fluke ALSO gets the mood pushed into its cel-shading colors and key light so the fin responds as a lit material, not just a graded pixel. Moods cross-fade over moodBlendTime. Custom uses the three colors below.")]
+    public SceneMood sceneMood = SceneMood.Day;
+    [Tooltip("Seconds to blend when the mood changes.")]
+    [Range(0.05f, 8f)] public float moodBlendTime = 1.2f;
+    [Tooltip("Show an on-screen button in play mode that cycles Day → Night → Kelp Forest → Bubbly Bright.")]
+    public bool sceneMoodButton = true;
+    [Tooltip("Custom mood: the frame is MULTIPLIED by this (white = untouched; channels above 1 brighten).")]
+    public Color customMoodTint = Color.white;
+    [Tooltip("Custom mood: additive glow haze layered on top (black = none). Keep it subtle.")]
+    public Color customMoodGlow = Color.black;
+    [Tooltip("Custom mood: light color multiplied into the 3D fluke's toon shading and key light — the fin's material response on top of the screen tint. Keep near white; the overlay already grades it.")]
+    public Color customMoodFlukeLight = Color.white;
+
     [Header("Hair (live-editable; some fields rebuild the hair on change)")]
     [Range(1, 80)] public int hairStrandCount = 26;
     [Range(3, 48)] public int hairBonesPerStrand = 34;
@@ -467,7 +481,17 @@ public class Mermaid2DBootstrap : MonoBehaviour
     [Tooltip("0 = uncapped (vsync). For a corner-widget/desktop-pet build, 30 keeps CPU+GPU usage tiny while the motion still reads smoothly.")]
     public int capFrameRate = 0;
 
-    [Header("Anchors (populated at runtime)")]
+    public enum SceneMood { Day, Night, KelpForest, BubblyBright, Custom }
+
+    // Scene-mood runtime state: current (blended) colors + the camera-parented overlay quad.
+    [System.NonSerialized] Color _moodTintCur = Color.white;
+    [System.NonSerialized] Color _moodGlowCur = Color.black;
+    [System.NonSerialized] Color _moodFlukeCur = Color.white;
+    MeshRenderer _moodOverlay;
+    Material _moodMat;
+    static Mesh _moodQuad;
+    const string MoodOverlayName = "MermaidMoodOverlay";
+
     // Pure runtime state — MUST stay non-serialized: these once captured a preview mermaid
     // into the saved scene (the "removed stale saved mermaid" warning), pinning 3000+ junk
     // objects in the file because the references kept them alive.
@@ -1533,6 +1557,117 @@ public class Mermaid2DBootstrap : MonoBehaviour
         return SpriteMat(goldDeepColor);
     }
 
+    // ---------------------------------------------------------------- scene mood
+
+    static void MoodTargets(SceneMood mood, out Color tint, out Color glow, out Color fluke)
+    {
+        switch (mood)
+        {
+            case SceneMood.Night:        // deep moonlit blue + faint moon-mist; fin catches cool light
+                tint = new Color(0.32f, 0.40f, 0.66f);
+                glow = new Color(0.03f, 0.045f, 0.11f);
+                fluke = new Color(0.80f, 0.88f, 1.18f);
+                break;
+            case SceneMood.KelpForest:   // green murk filtering through the canopy
+                tint = new Color(0.50f, 0.82f, 0.55f);
+                glow = new Color(0.015f, 0.05f, 0.02f);
+                fluke = new Color(0.85f, 1.08f, 0.85f);
+                break;
+            case SceneMood.BubblyBright: // lifted, warm, sparkling shallows (>1 brightens)
+                tint = new Color(1.12f, 1.07f, 0.98f);
+                glow = new Color(0.09f, 0.07f, 0.04f);
+                fluke = new Color(1.12f, 1.06f, 1.0f);
+                break;
+            default:                     // Day = untouched frame
+                tint = Color.white;
+                glow = Color.black;
+                fluke = Color.white;
+                break;
+        }
+    }
+
+    static Mesh MoodQuadMesh()
+    {
+        if (_moodQuad != null) return _moodQuad;
+        _moodQuad = new Mesh { name = "MoodOverlayQuad" };
+        _moodQuad.vertices = new[]
+        {
+            new Vector3(-0.5f, -0.5f, 0f), new Vector3(0.5f, -0.5f, 0f),
+            new Vector3(-0.5f, 0.5f, 0f), new Vector3(0.5f, 0.5f, 0f),
+        };
+        _moodQuad.triangles = new[] { 0, 2, 1, 2, 3, 1 };
+        _moodQuad.hideFlags = HideFlags.HideAndDontSave;
+        return _moodQuad;
+    }
+
+    // Blends the current mood colors toward the active preset and keeps a camera-parented
+    // fullscreen quad (multiply + additive passes) sized to the view. The quad tints
+    // EVERYTHING the camera rendered — sprites, ribbons, sky, rays, outline — while
+    // _moodFlukeCur is separately pushed into the 3D fluke's toon colors and key light in
+    // section 3d, so the fin reacts as a lit material on top of the uniform grade.
+    void ApplyMoodTick()
+    {
+        Color tTint, tGlow, tFluke;
+        if (sceneMood == SceneMood.Custom)
+        {
+            tTint = customMoodTint; tGlow = customMoodGlow; tFluke = customMoodFlukeLight;
+        }
+        else MoodTargets(sceneMood, out tTint, out tGlow, out tFluke);
+
+        float dt = Application.isPlaying ? Time.deltaTime : 1f / 60f;
+        float k = 1f - Mathf.Exp(-3f * dt / Mathf.Max(0.05f, moodBlendTime));
+        _moodTintCur = Color.Lerp(_moodTintCur, tTint, k);
+        _moodGlowCur = Color.Lerp(_moodGlowCur, tGlow, k);
+        _moodFlukeCur = Color.Lerp(_moodFlukeCur, tFluke, k);
+
+        var cam = followRef != null ? followRef.GetComponent<Camera>() : Camera.main;
+        if (cam == null) return;
+
+        // Overlay needed while anything deviates from the neutral Day grade.
+        bool active = sceneMood != SceneMood.Day
+            || Mathf.Abs(_moodTintCur.r - 1f) > 0.004f || Mathf.Abs(_moodTintCur.g - 1f) > 0.004f
+            || Mathf.Abs(_moodTintCur.b - 1f) > 0.004f || _moodGlowCur.maxColorComponent > 0.004f;
+
+        if (_moodOverlay == null)
+        {
+            // Recover an existing overlay after a domain reload before making a new one.
+            var existing = cam.transform.Find(MoodOverlayName);
+            if (existing != null)
+            {
+                _moodOverlay = existing.GetComponent<MeshRenderer>();
+                _moodMat = _moodOverlay != null ? _moodOverlay.sharedMaterial : null;
+            }
+        }
+        if (_moodOverlay == null && active)
+        {
+            var sh = Shader.Find("Mermaid/MoodOverlay2D");
+            if (sh == null) return;
+            var go = new GameObject(MoodOverlayName);
+            go.hideFlags = HideFlags.DontSave;   // camera-parented; must never enter the scene file
+            go.transform.SetParent(cam.transform, false);
+            go.transform.localPosition = new Vector3(0f, 0f, 5f);
+            var mf = go.AddComponent<MeshFilter>();
+            mf.sharedMesh = MoodQuadMesh();
+            _moodOverlay = go.AddComponent<MeshRenderer>();
+            _moodMat = new Material(sh) { renderQueue = 3000 };   // sortingOrder applies
+            _moodOverlay.sharedMaterial = _moodMat;
+            _moodOverlay.sortingOrder = 500;   // over the whole world (front motes 30), under uGUI
+            _moodOverlay.shadowCastingMode = UnityEngine.Rendering.ShadowCastingMode.Off;
+            _moodOverlay.receiveShadows = false;
+        }
+        if (_moodOverlay == null) return;
+
+        _moodOverlay.enabled = active;
+        if (!active) return;
+        float h = cam.orthographic ? cam.orthographicSize * 2f : 20f;
+        _moodOverlay.transform.localScale = new Vector3(h * cam.aspect + 2f, h + 2f, 1f);
+        if (_moodMat != null)
+        {
+            _moodMat.SetColor("_Tint", _moodTintCur);
+            _moodMat.SetColor("_Glow", _moodGlowCur);
+        }
+    }
+
     // Ticks the true-3D fluke bones. This component runs at order −100, so in play the fin
     // reads the tail tip's PREVIOUS-frame pose — invisible under 0.1–0.3s of bone smoothing.
     void LateUpdate()
@@ -1552,7 +1687,22 @@ public class Mermaid2DBootstrap : MonoBehaviour
     // Update, which rebuilds the fin — same path as editing the field in the inspector.
     void OnGUI()
     {
-        if (!Application.isPlaying || !fluke3DStyleButton || !flukeTrue3D) return;
+        if (!Application.isPlaying) return;
+
+        // Mood cycler, stacked above the fluke button. Cycles the four presets; a Custom
+        // mood set in the inspector is left alone until the button wraps it back to Day.
+        if (sceneMoodButton)
+        {
+            string moodName = sceneMood == SceneMood.KelpForest ? "Kelp Forest"
+                : sceneMood == SceneMood.BubblyBright ? "Bubbly Bright" : sceneMood.ToString();
+            var mrect = new Rect(12f, Screen.height - 84f, 250f, 34f);
+            if (GUI.Button(mrect, $"Mood: {moodName}  ▶"))
+                sceneMood = sceneMood == SceneMood.Custom
+                    ? SceneMood.Day
+                    : (SceneMood)(((int)sceneMood + 1) % 4);   // Day→Night→Kelp→Bubbly→Day
+        }
+
+        if (!fluke3DStyleButton || !flukeTrue3D) return;
         var list = StyleAssetList();
         bool usingAssets = list != null && list.Length > 0;
         var worn = ActiveFlukeStyle();
@@ -2319,6 +2469,11 @@ public class Mermaid2DBootstrap : MonoBehaviour
                 : (classicLook ? fluke3DToonBase : FlukeStyles.ToonBase(fluke3DStyle));
             Color toonShade = wornStyle != null ? wornStyle.toonShade
                 : (classicLook ? fluke3DToonShade : FlukeStyles.ToonShade(fluke3DStyle));
+            // Scene mood: the fin reacts as a lit MATERIAL — its cel colors ride the mood
+            // light on top of the fullscreen grade every rendered pixel already gets.
+            toonBase = new Color(toonBase.r * _moodFlukeCur.r, toonBase.g * _moodFlukeCur.g, toonBase.b * _moodFlukeCur.b, toonBase.a);
+            toonShade = new Color(toonShade.r * _moodFlukeCur.r, toonShade.g * _moodFlukeCur.g, toonShade.b * _moodFlukeCur.b, toonShade.a);
+            Color toonInk = new Color(fluke3DToonInkColor.r * _moodFlukeCur.r, fluke3DToonInkColor.g * _moodFlukeCur.g, fluke3DToonInkColor.b * _moodFlukeCur.b, fluke3DToonInkColor.a);
 
             for (int i = 0; i < fluke3DFlaps.Count; i++)
             {
@@ -2345,7 +2500,7 @@ public class Mermaid2DBootstrap : MonoBehaviour
                     float k = flap.lobe == 0 ? 1f - Mathf.Clamp01(fluke3DFarLobeDarken) : 1f;
                     mat.SetColor("_ToonBase", new Color(toonBase.r * k, toonBase.g * k, toonBase.b * k, toonBase.a));
                     mat.SetColor("_ToonShade", new Color(toonShade.r * k, toonShade.g * k, toonShade.b * k, toonShade.a));
-                    mat.SetColor("_InkColor", fluke3DToonInkColor);
+                    mat.SetColor("_InkColor", toonInk);
                     mat.SetFloat("_InkWidth", fluke3DToonInkWidth);
                 }
 
@@ -2382,7 +2537,11 @@ public class Mermaid2DBootstrap : MonoBehaviour
                 fluke3DSepMat.SetFloat("_Width", fluke3DNearOutlineWidth);
             }
         }
-        if (fluke3DLightRef != null) fluke3DLightRef.enabled = fluke3DLight;
+        if (fluke3DLightRef != null)
+        {
+            fluke3DLightRef.enabled = fluke3DLight;
+            fluke3DLightRef.color = _moodFlukeCur;   // GoldScales-material users get lit by the mood
+        }
 
         // 4. Live-editable hair root position + hair widths.
         if (headScalp != null) headScalp.localPosition = (Vector3)hairRootOffset;
@@ -2416,6 +2575,9 @@ public class Mermaid2DBootstrap : MonoBehaviour
 
         // 5c. Live unified-outline tuning (mode/width/color, both modes).
         ApplyOutlineTick();
+
+        // 5d. Scene mood: blend toward the active preset and drive the fullscreen grade.
+        ApplyMoodTick();
 
         // 6. Live seaweed motion (segments change rebuilds that bed's mesh).
         int swSeg = Mathf.Clamp(seaweedSegments, 2, 24);
